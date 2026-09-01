@@ -1,0 +1,3 @@
+# Convenience entry point for reproducing the paper.  For the reusable router
+# alone, `python -m pip install -e .` installs only NumPy and PyTorch.
+-e .[paper]
