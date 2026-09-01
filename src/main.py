@@ -102,13 +102,6 @@ def maybe_fit_field_normalizer(model, train_loader, args, rank=0):
         print(f"[FieldAR] fitted per-channel normalizer: mean={mean.detach().cpu().tolist()} std={std.detach().cpu().tolist()}")
 
 
-@torch.no_grad()
-
-
-
-
-
-
 def worker(rank, args, world_size):
     setup_ddp(rank, world_size)
     seed_everything(args.seed + rank)

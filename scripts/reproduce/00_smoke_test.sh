@@ -12,4 +12,7 @@ echo "[3/4] run minimal training example"
 "${PYTHON}" examples/quickstart_internal_dw.py
 
 echo "[4/4] run public API tests"
-"${PYTHON}" -m pytest -q tests/test_public_internal_dw_api.py tests/test_dual_wiener.py
+"${PYTHON}" -m pytest -q \
+  tests/test_public_internal_dw_api.py \
+  tests/test_dual_wiener.py \
+  tests/test_release_training_paths.py

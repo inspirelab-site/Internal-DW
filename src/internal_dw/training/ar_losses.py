@@ -191,6 +191,23 @@ def _ar_forward_pred(raw, stim_window: torch.Tensor | None, history: torch.Tenso
     return out
 
 
+def _checkpointed_windowed_step(
+    raw,
+    horizon_index: int,
+    total_horizon: int,
+    stim_window: torch.Tensor | None,
+    history: torch.Tensor,
+):
+    """Tensor-only forward used by non-reentrant activation checkpointing."""
+
+    if hasattr(raw, "set_resgrad_context"):
+        raw.set_resgrad_context(
+            horizon_index=horizon_index,
+            total_horizon=total_horizon,
+        )
+    return raw(stim_window, history, return_aux=False)
+
+
 
 
 
@@ -505,6 +522,29 @@ def _unflatten_mamba_state(flat, depth):
     """
     per = max(1, len(flat) // max(1, depth))
     return tuple(tuple(flat[i * per:(i + 1) * per]) for i in range(depth))
+
+
+def _checkpointed_recurrent_step(
+    raw,
+    depth: int,
+    x_in: torch.Tensor,
+    stim_in: torch.Tensor | None,
+    horizon_index: int,
+    total_horizon: int,
+    *h_flat: torch.Tensor,
+):
+    """Rebuild one recurrent step during activation-checkpoint backward."""
+
+    h = _unflatten_mamba_state(h_flat, depth)
+    prediction, h_next, _ = raw.step(
+        h,
+        x_in,
+        stim_in,
+        return_aux=True,
+        horizon_index=horizon_index,
+        total_horizon=total_horizon,
+    )
+    return (prediction,) + _flatten_mamba_state(h_next)
 
 
 
