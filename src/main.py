@@ -555,25 +555,10 @@ def build_parser():
     p.add_argument("--roi_dim", type=int, default=400)
     p.add_argument("--visual_only", action="store_true", default=False)
 
-    # Lorenz-96 (dataset "lorenz96"): chaotic ODE, generated on the fly and cached
-    # under --data_path. D=40, F=8 is the canonical chaotic regime (leading Lyapunov
-    # exponent ~1.71, Lyapunov time ~0.58 MTU). At l96_dt=0.025 a K=64 rollout spans
-    # ~2.7 Lyapunov times. build_lorenz96_splits overwrites roi_dim with l96_dim.
-    p.add_argument("--l96_dim", type=int, default=40, help="number of variables = state dim")
-    p.add_argument("--l96_forcing", type=float, default=8.0, help="forcing F (8.0 = chaotic)")
-    p.add_argument("--l96_dt", type=float, default=0.025, help="autoregressive step (model time step)")
-    p.add_argument("--l96_solver_dt", type=float, default=0.005, help="internal RK4 step")
-    p.add_argument("--l96_len", type=int, default=1024, help="samples kept per trajectory")
-    p.add_argument("--l96_traj", type=int, default=40, help="number of independent trajectories")
-    p.add_argument("--l96_transient", type=float, default=20.0, help="MTU discarded to reach the attractor")
-    p.add_argument("--l96_seed", type=int, default=0, help="seed for trajectory generation (not the train seed)")
-    p.add_argument("--l96_normalize", type=int, default=1, help="standardize using train-split statistics")
-
     # Mackey-Glass (dataset "mackey_glass"): delay ODE whose delay tau IS the memory
     # length in AR steps (tau/mg_dt), so K* is set rather than estimated. It also
     # spans the regimes: at beta=0.2, gamma=0.1, n=10 it is a stable limit cycle for
-    # tau < ~16.8, weakly chaotic near tau=17, clearly chaotic by tau=30 -- giving the
-    # non-chaotic corner that Lorenz-96 cannot reach. Autonomous (one channel).
+    # tau < ~16.8, weakly chaotic near tau=17, and clearly chaotic by tau=30.
     p.add_argument("--mg_dim", type=int, default=8, help="independent series stacked as channels")
     p.add_argument("--mg_tau", type=float, default=17.0, help="delay; = memory length in AR steps when mg_dt=1")
     p.add_argument("--mg_dt", type=float, default=1.0, help="autoregressive step (model time step)")
@@ -648,8 +633,7 @@ def build_parser():
     # iEEG band envelopes (dataset "ieeg"). Electrode counts differ between subjects,
     # so one model per subject; the recording is split along TIME into contiguous
     # train/val/test blocks with a gap. At ieeg_step_ms=20 the theta envelope has
-    # one-step autocorrelation 0.993 (matched to Lorenz-96's 0.992) but still ~0.14
-    # at 50 steps, i.e. a 4-5x longer decorrelation range in step units.
+    # one-step autocorrelation 0.993 and remains around 0.14 at 50 steps.
     p.add_argument("--ieeg_root", type=str,
                    default="data/ieeg/preprocessed_length_matched",
                    help="directory of flat {subj}_{run}_{task}_{contact}_{band}.fif files")
@@ -664,18 +648,6 @@ def build_parser():
     p.add_argument("--ieeg_split_gap", type=int, default=256,
                    help="steps dropped between splits so no window straddles a boundary")
 
-    # PhysioNet gait stride intervals (dataset "gait"). The memory length is set by
-    # the CONDITION, not by a parameter: free walking (norm/fast/slow) keeps
-    # autocorrelation ~0.12-0.14 out to lag 200, metronome-paced walking
-    # (metnrm/metfst/metslw) is at zero by lag 4. Same subjects, same movement.
-    p.add_argument("--gait_root", type=str,
-                   default="data/gait/long-term-recordings-of-gait-dynamics-1.0.0")
-    p.add_argument("--gait_condition", type=str, default="norm",
-                   help="norm|fast|slow (free, long memory) or metnrm|metfst|metslw (metronome, short)")
-    p.add_argument("--gait_chunk", type=int, default=512, help="steps per training sequence")
-    p.add_argument("--gait_detrend", type=int, default=0,
-                   help="1 = remove a per-recording linear trend (drift control)")
-
     # Checkpoint-free temporal archives created by
     # scripts/data/prepare_temporal_candidate_screen_data.py.  Autonomous and driven
     # archives use separate dataset names so the model-side external-input
@@ -683,61 +655,18 @@ def build_parser():
     p.add_argument("--prepared_temporal_npz", type=str, default="")
     p.add_argument("--prepared_temporal_standardize", type=int, default=1)
 
-    # WeatherBench-1 5.625deg (32x64) driven-chaotic testbed. --data_path = the folder
-    # produced by scripts/download_weatherbench.sh (per-variable subfolders of yearly .nc).
-    p.add_argument("--wb_area_weight", type=int, default=0,
-                   help="Fold sqrt(cos(lat)) into the stored WeatherBench state so the loss, "
-                        "the Dual-Wiener probes and the calibrated innovation covariance are all "
-                        "latitude-weighted. Score with --data-preweighted.")
-    p.add_argument("--wb_vars", type=str, default="geopotential_500 temperature_850 2m_temperature",
-                   help="space-separated WeatherBench variable folder names (channels)")
-    p.add_argument("--wb_step_hours", type=int, default=6, help="temporal subsample (hourly -> 6h)")
-    p.add_argument("--wb_seg_len", type=int, default=256, help="segment (trajectory) length in steps")
-    p.add_argument("--wb_time_features", type=int, default=1, help="1 = hand diurnal+seasonal forcing phase as external input")
     p.add_argument("--resgrad_cut_state", action=argparse.BooleanOptionalAction, default=False,
                    help="residual_gru only: also detach the carried state at gate 0, mirroring "
                         "official_state_mamba. Default False = the paper's stated I+mJ_F intervention, "
                         "which leaves the identity path (and hence cross-time gradient) open.")
-    p.add_argument("--wb_field", type=int, default=0,
-                   help="1 = serve WeatherBench as a 2-D field [C,H,W] for the grid baselines "
-                        "(UNet/CNN/FNO); 0 = flatten to a state vector for the sequence models")
-    p.add_argument("--wb_train_years", type=str, default="1979-2015")
-    p.add_argument("--wb_val_years", type=str, default="2016-2016")
-    p.add_argument("--wb_test_years", type=str, default="2017-2018")
+
+    # WeatherBench-2 memory-mapped field trajectories.
     p.add_argument("--wb2_seg_len", type=int, default=64,
                    help="WeatherBench-2 memory-map trajectory length in 6-hour steps.")
     p.add_argument("--wb2_train_stride", type=int, default=64,
                    help="Start stride between WeatherBench-2 training trajectories.")
     p.add_argument("--wb2_eval_stride", type=int, default=64,
                    help="Start stride between WeatherBench-2 validation/test trajectories.")
-
-    # SEVIR VIL radar nowcasting. The HDF5 archive is streamed in place.
-    p.add_argument("--sevir_sequence_length", type=int, default=49,
-                   help="Frames returned from each 49-frame SEVIR event.")
-    p.add_argument("--sevir_spatial_subsample", type=int, default=3,
-                   help="Centre-pixel spatial stride; 3 maps the native 384x384 VIL grid to 128x128 without changing threshold scale.")
-    p.add_argument("--sevir_val_start", type=str, default="2019-01-01",
-                   help="Chronological validation boundary; the official 2019-06-01 test boundary remains separate.")
-    p.add_argument("--sevir_test_start", type=str, default="2019-06-01",
-                   help="Official SEVIR test boundary.")
-    p.add_argument("--sevir_max_train_events", type=int, default=0,
-                   help="Deterministic pilot cap; 0 uses every training event.")
-    p.add_argument("--sevir_max_val_events", type=int, default=0,
-                   help="Deterministic pilot cap; 0 uses every validation event.")
-    p.add_argument("--sevir_max_test_events", type=int, default=0,
-                   help="Deterministic pilot cap; 0 uses every test event.")
-    p.add_argument("--sevir_native_scale", type=float, default=255.0,
-                   help="Inverse scale used to restore native uint8 VIL values for CSI evaluation.")
-
-    # KTH Actions video-prediction candidate (official subject-disjoint split).
-    p.add_argument("--kth_sequence_length", type=int, default=32)
-    p.add_argument("--kth_sequence_stride", type=int, default=16)
-    p.add_argument("--kth_time_subsample", type=int, default=1)
-    p.add_argument("--kth_height", type=int, default=64)
-    p.add_argument("--kth_width", type=int, default=80)
-    p.add_argument("--kth_max_train_samples", type=int, default=0)
-    p.add_argument("--kth_max_val_samples", type=int, default=0)
-    p.add_argument("--kth_max_test_samples", type=int, default=0)
 
     p.add_argument("--window_size", type=int, default=4)
     p.add_argument("--test_horizons", type=int, nargs="+", default=[1, 2, 4, 8, 16, 32, 64])

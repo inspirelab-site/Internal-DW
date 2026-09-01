@@ -113,7 +113,6 @@ def main() -> None:
         "Shear": "#E69F00",
         "WB2": "#009E73",
         "fMRI": "#8C510A",
-        "SEVIR": "#5D6D7E",
         "ETTm1": "#CC79A7",
         "ETTm2": "#5E3C99",
     }

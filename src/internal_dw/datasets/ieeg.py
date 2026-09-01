@@ -1,9 +1,8 @@
 """Movie-watching iEEG band envelopes as a long-memory autoregressive testbed.
 
-Why this dataset.  The two real datasets used so far sit at opposite useless
-extremes for a memory question: Lorenz-96 decorrelates in ~16 AR steps, and HCP
-fMRI in ~3 steps while giving only ~285 timepoints per subject, which is too few
-to measure anything at horizon 64.  Intracranial EEG band envelopes are the
+Why this dataset. HCP fMRI decorrelates in only a few AR steps and provides too
+few timepoints per subject to measure horizon-64 behavior reliably.
+Intracranial EEG band envelopes are the
 standard signal for which long-range temporal correlations are actually
 documented, and the recordings are ~480 s at 500 Hz -- 23,943 steps per run at a
 20 ms model step, roughly 840x more data per subject than the fMRI.
@@ -18,9 +17,7 @@ Measured on P41CS R1 enc macro (16 channels, envelope autocorrelation):
     hfb      0.135   0.067   0.053   0.028   0.016   0.008    0.03 s
 
 At a 20 ms step theta therefore has autocorrelation 0.993 one step ahead and
-still ~0.14 at 50 steps -- one-step difficulty matched to Lorenz-96 (0.992) but
-a decorrelation range 4-5x longer in step units.  That is the regime this
-project needs and neither existing real dataset provides.
+still about 0.14 at 50 steps, providing the long-memory regime needed here.
 
 The files in ``preprocessed_length_matched`` are already band envelopes (their
 autocorrelation decays monotonically rather than oscillating at the band
@@ -32,7 +29,7 @@ We therefore fit one subject and split that subject's recording along TIME into
 contiguous train / val / test blocks, with a gap between blocks so no training
 window can overlap an evaluation window.
 
-Interface matches lorenz96.py.
+The implementation follows the shared :class:`SequenceDataset` interface.
 """
 from pathlib import Path
 from typing import List, Optional, Tuple

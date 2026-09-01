@@ -18,7 +18,6 @@ from typing import Iterable
 import numpy as np
 
 
-GAIT_CONDITIONS = ("norm", "fast", "slow", "metnrm", "metfst", "metslw")
 ETT_FILES = ("ETTh1.csv", "ETTh2.csv", "ETTm1.csv", "ETTm2.csv")
 
 
@@ -83,67 +82,6 @@ def _write(
     )
 
 
-def _load_gait_recordings(root: Path, condition: str, detrend: bool) -> list[np.ndarray]:
-    files = sorted(root.glob(f"si*.{condition}"))
-    if len(files) != 10:
-        raise FileNotFoundError(
-            f"expected 10 gait recordings for {condition}, found {len(files)} under {root}"
-        )
-    rows = []
-    for path in files:
-        values = np.loadtxt(path, dtype=np.float32).reshape(-1)
-        if detrend:
-            time = np.arange(len(values), dtype=np.float64)
-            slope, intercept = np.polyfit(time, values.astype(np.float64), 1)
-            values = (values - (slope * time + intercept)).astype(np.float32)
-        rows.append(values[:, None])
-    return rows
-
-
-def _balanced_recording_chunks(
-    recordings: list[np.ndarray], indices: np.ndarray, chunk: int
-) -> np.ndarray:
-    counts = [len(recordings[int(index)]) // int(chunk) for index in indices]
-    keep = min(counts)
-    if keep < 1:
-        raise ValueError("a gait subject has no complete chunk")
-    chunks = [_chunks(recordings[int(index)], chunk)[:keep] for index in indices]
-    return np.ascontiguousarray(np.concatenate(chunks, axis=0), dtype=np.float32)
-
-
-def _prepare_gait(args: argparse.Namespace) -> None:
-    rng = np.random.default_rng(int(args.seed))
-    order = rng.permutation(10)
-    train_ids, validation_ids, test_ids = order[:6], order[6:8], order[8:]
-    for condition in GAIT_CONDITIONS:
-        for detrend in (False, True):
-            recordings = _load_gait_recordings(args.gait_root, condition, detrend)
-            states = tuple(
-                _balanced_recording_chunks(recordings, ids, args.chunk)
-                for ids in (train_ids, validation_ids, test_ids)
-            )
-            suffix = "detrended" if detrend else "raw"
-            metadata = {
-                "dataset": "gait",
-                "condition": condition,
-                "preprocessing": suffix,
-                "subject_split": {
-                    "train": train_ids.tolist(),
-                    "validation": validation_ids.tolist(),
-                    "test": test_ids.tolist(),
-                },
-                "selection_inputs": "condition and detrending are prespecified controls",
-                "official_test_reserved": True,
-            }
-            _write(
-                args.output_root / f"gait_{condition}_{suffix}.npz",
-                states,
-                None,
-                metadata,
-                args.force,
-            )
-
-
 def _resolve_ett_small(root: Path) -> Path:
     candidates = (root / "ETT-small", root / "ETDataset-main" / "ETT-small")
     for candidate in candidates:
@@ -168,6 +106,8 @@ def _read_ett(path: Path) -> tuple[list[str], np.ndarray]:
 
 
 def _prepare_ett(args: argparse.Namespace) -> None:
+    if args.ett_root is None:
+        raise ValueError("--ett-root is required when --only includes ett")
     root = _resolve_ett_small(args.ett_root)
     for filename in ETT_FILES:
         path = root / filename
@@ -262,6 +202,10 @@ def _read_electricity_selected(path: Path, maximum_clients: int) -> tuple[list[s
 
 
 def _prepare_electricity(args: argparse.Namespace) -> None:
+    if args.electricity_root is None:
+        raise ValueError(
+            "--electricity-root is required when --only includes electricity"
+        )
     path = args.electricity_root / "LD2011_2014.txt"
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -293,10 +237,9 @@ def _prepare_electricity(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", choices=("all", "gait", "ett", "electricity"), default="all")
-    parser.add_argument("--gait-root", type=Path, required=True)
-    parser.add_argument("--ett-root", type=Path, required=True)
-    parser.add_argument("--electricity-root", type=Path, required=True)
+    parser.add_argument("--only", choices=("all", "ett", "electricity"), default="all")
+    parser.add_argument("--ett-root", type=Path)
+    parser.add_argument("--electricity-root", type=Path)
     parser.add_argument(
         "--output-root", type=Path,
         default=Path("probe_inputs/temporal_candidate_regime_v1"),
@@ -307,8 +250,6 @@ def main() -> None:
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    if args.only in ("all", "gait"):
-        _prepare_gait(args)
     if args.only in ("all", "ett"):
         _prepare_ett(args)
     if args.only in ("all", "electricity"):

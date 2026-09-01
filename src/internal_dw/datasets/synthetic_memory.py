@@ -13,8 +13,8 @@ requirement is a generation parameter we set.
         over a chaotic PDE here: at beta=0.2, gamma=0.1, n=10 the system is a
         stable limit cycle for tau < ~16.8, weakly chaotic near tau=17, and
         clearly chaotic by tau=30.  So chaoticity and memory length can be
-        varied along the same axis and the non-chaotic corner -- absent from
-        Lorenz-96 -- is reachable.
+        varied along the same axis while retaining a controlled non-chaotic
+        corner.
         Autonomous: no external input, one information channel.
 
     NARMA-L         y(t+1) = 0.3 y(t) + 0.05 y(t) * sum_{i<L} y(t-i)
@@ -28,7 +28,7 @@ requirement is a generation parameter we set.
 Both are cheap: a few seconds to generate, cached to --data_path as .npz, so a
 full K-sweep is minutes rather than GPU-days.
 
-Interface matches lorenz96.py: __getitem__ returns
+The shared dataset interface returns
     {"state": [T, D] float32, "external_input": [T, S] float32 or None, ...}
 and build_*_splits(args) returns (train, val, test) and sets args.roi_dim.
 """

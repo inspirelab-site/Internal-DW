@@ -117,36 +117,12 @@ def _load_checkpoint_state(model, checkpoint: dict) -> None:
 
 def _compatible_data_args(reference, other, label: str) -> None:
     keys = (
-        "dataset", "data_path", "wb_vars", "wb_step_hours", "wb_seg_len",
-        "wb_train_years", "wb_val_years", "wb_test_years", "wb_field",
-        "wb_area_weight", "window_size", "field_channels", "field_height",
+        "dataset", "data_path", "window_size", "field_channels", "field_height",
         "field_width", "wb2_seg_len", "wb2_train_stride", "wb2_eval_stride",
     )
-    # Some early WeatherBench checkpoints predate explicitly serializing these
-    # flags.  Their loader defaults are the values below, so ``None``/missing
-    # and an explicitly saved default describe the same data transformation.
-    defaults = {
-        "wb_area_weight": 0,
-        "wb_field": 0,
-        "wb_step_hours": 6,
-        "wb_time_features": 1,
-    }
-
-    def normalized(obj, key):
-        value = getattr(obj, key, None)
-        if value is None and key in defaults:
-            value = defaults[key]
-        # Shell arguments sometimes reach old checkpoints as strings.
-        if key in defaults:
-            try:
-                value = int(value)
-            except (TypeError, ValueError):
-                pass
-        return value
-
     mismatches = []
     for key in keys:
-        a, b = normalized(reference, key), normalized(other, key)
+        a, b = getattr(reference, key, None), getattr(other, key, None)
         if a != b:
             mismatches.append(f"{key}: {a!r} != {b!r}")
     if mismatches:
@@ -477,8 +453,8 @@ def main() -> None:
     np.random.seed(cli.seed)
 
     reference_args, _ = _checkpoint_args(checkpoints[0][1])
-    if str(getattr(reference_args, "dataset", "")) not in ("weatherbench", "weatherbench2"):
-        raise ValueError("reference checkpoint is not WeatherBench/WeatherBench-2")
+    if str(getattr(reference_args, "dataset", "")) != "weatherbench2":
+        raise ValueError("reference checkpoint is not WeatherBench-2")
     if str(getattr(reference_args, "model_name", "")) != "unet_field":
         raise ValueError("this probe currently targets model_name=unet_field")
     window = int(getattr(reference_args, "window_size", 0))

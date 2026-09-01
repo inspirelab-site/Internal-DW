@@ -5,7 +5,7 @@
 #   DATASET=narma COND=L20 K=32 METHOD=ckpt SEED=0 GPU=0 \
 #     nohup bash scripts/train/run_mem_one.sh > /dev/null 2>&1 &
 #
-# DATASET: mackey_glass | mackey_glass_driven | narma | ieeg | gait | known_snr_ar |
+# DATASET: mackey_glass | mackey_glass_driven | narma | ieeg | known_snr_ar |
 #          prepared_temporal_autonomous | prepared_temporal_driven
 # COND:    the memory-length knob for that dataset (see the case block below).
 #          Each dataset has a LONG-memory and a SHORT-memory setting; the point
@@ -32,7 +32,7 @@ if [[ "${USE_MPS:-0}" != "1" ]]; then
 fi
 mkdir -p "$CUDA_MPS_PIPE_DIRECTORY"
 
-DATASET=${DATASET:?set DATASET (mackey_glass|mackey_glass_driven|narma|ieeg|gait|known_snr_ar|prepared_temporal_autonomous|prepared_temporal_driven)}
+DATASET=${DATASET:?set DATASET (mackey_glass|mackey_glass_driven|narma|ieeg|known_snr_ar|prepared_temporal_autonomous|prepared_temporal_driven)}
 COND=${COND:?set COND (see script header)}
 K=${K:?set K}
 METHOD=${METHOD:?set METHOD (ckpt|none|p<frac>)}
@@ -96,9 +96,8 @@ fi
 export RECURRENT_EVAL_HORIZON_BATCH
 
 # ---- per-dataset knobs -------------------------------------------------------
-# HIDDEN is set per dataset because the state dimensions differ by ~80x
-# (gait D=1, MG/NARMA D=8, iEEG D=80) and Lorenz's hidden 512 would be absurd on
-# a scalar series.  It MUST stay fixed within a dataset: the long/short-memory
+# HIDDEN is set per dataset because the state dimensions differ substantially.
+# It MUST stay fixed within a dataset: the long/short-memory
 # comparison is only controlled if capacity is identical across the two arms.
 case "${DATASET}" in
   mackey_glass_driven)
@@ -174,15 +173,6 @@ case "${DATASET}" in
     esac
     DS+=(--ieeg_subject "${IEEG_SUBJECT:-P41CS}" --ieeg_task enc --ieeg_contact macro
          --ieeg_step_ms 20 --ieeg_chunk 1024)
-    ;;
-  gait)
-    HIDDEN=${HIDDEN:-128}
-    case "${COND}" in
-      norm|fast|slow)          DS=(--gait_condition "${COND}") ;;  # free, autocorr >0.1 at lag 200
-      metnrm|metfst|metslw)    DS=(--gait_condition "${COND}") ;;  # metronome, zero by lag 4
-      *) echo "unknown COND ${COND} for ${DATASET}"; exit 2 ;;
-    esac
-    DS+=(--gait_chunk 512)
     ;;
   prepared_temporal_autonomous)
     HIDDEN=${HIDDEN:-128}

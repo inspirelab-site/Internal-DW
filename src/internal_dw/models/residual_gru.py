@@ -112,9 +112,7 @@ class ResidualGRUARModel(nn.Module):
         # Predict the increment, not the frame: pred = x_t + Delta.  The Mamba
         # stack does the same (`pred_flat = x_flat + delta` under --simple_residual),
         # and on smoothly-evolving states it is the difference between learning a
-        # small correction and reconstructing the whole state from scratch --
-        # Lorenz-96 has autocorr(k=1) = 0.992, so without this even the one-step
-        # map is far harder than it should be.
+        # small correction and reconstructing the whole state from scratch.
         self.residual = bool(residual)
         self.resgrad_routing = bool(resgrad_routing)
         self.resgrad_policy = str(resgrad_policy).lower()

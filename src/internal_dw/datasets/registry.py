@@ -5,14 +5,12 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 from .base import SequenceDataset, sequence_collate
 from .hcp import HCPMovieDataset, build_hcp_splits
-from .gait import GaitDataset, build_gait_splits
 from .prepared_temporal import (
     PreparedTemporalAutonomousDataset,
     PreparedTemporalDrivenDataset,
     build_prepared_temporal_splits,
 )
 from .ieeg import IEEGDataset, build_ieeg_splits
-from .lorenz96 import Lorenz96Dataset, build_lorenz96_splits
 from .synthetic_memory import (
     DrivenMackeyGlassDataset,
     KnownSNRARDataset,
@@ -24,27 +22,19 @@ from .synthetic_memory import (
     build_narma_splits,
 )
 from .thewell import TheWell2DDataset, build_thewell_splits
-from .weatherbench import WeatherBenchDataset, build_weatherbench_splits
 from .weatherbench2 import WeatherBench2Dataset, build_weatherbench2_splits
-from .sevir import SEVIRVILDataset, build_sevir_splits
-from .kth_actions import KTHActionsDataset, build_kth_actions_splits
 
 _DATASETS: Dict[str, Type[SequenceDataset]] = {
-    "gait": GaitDataset,
     "hcp_movie": HCPMovieDataset,
     "ieeg": IEEGDataset,
     "known_snr_ar": KnownSNRARDataset,
-    "lorenz96": Lorenz96Dataset,
     "mackey_glass": MackeyGlassDataset,
     "mackey_glass_driven": DrivenMackeyGlassDataset,
     "narma": NARMADataset,
     "prepared_temporal_autonomous": PreparedTemporalAutonomousDataset,
     "prepared_temporal_driven": PreparedTemporalDrivenDataset,
     "the_well": TheWell2DDataset,
-    "weatherbench": WeatherBenchDataset,
     "weatherbench2": WeatherBench2Dataset,
-    "sevir": SEVIRVILDataset,
-    "kth_actions": KTHActionsDataset,
 }
 
 
@@ -79,10 +69,6 @@ def build_dataset(name: str, **kwargs) -> SequenceDataset:
 def build_dataloaders(args, rank: int = 0, world_size: int = 1):
     if args.dataset == "hcp_movie":
         train_set, val_set, test_set = build_hcp_splits(args)
-    elif args.dataset == "lorenz96":
-        train_set, val_set, test_set = build_lorenz96_splits(args)
-    elif args.dataset == "gait":
-        train_set, val_set, test_set = build_gait_splits(args)
     elif args.dataset == "ieeg":
         train_set, val_set, test_set = build_ieeg_splits(args)
     elif args.dataset == "known_snr_ar":
@@ -103,14 +89,8 @@ def build_dataloaders(args, rank: int = 0, world_size: int = 1):
         )
     elif args.dataset == "the_well":
         train_set, val_set, test_set = build_thewell_splits(args)
-    elif args.dataset == "weatherbench":
-        train_set, val_set, test_set = build_weatherbench_splits(args)
     elif args.dataset == "weatherbench2":
         train_set, val_set, test_set = build_weatherbench2_splits(args)
-    elif args.dataset == "sevir":
-        train_set, val_set, test_set = build_sevir_splits(args)
-    elif args.dataset == "kth_actions":
-        train_set, val_set, test_set = build_kth_actions_splits(args)
     else:
         raise ValueError(f"Unknown dataset={args.dataset}. Available: {list_datasets()}")
 
