@@ -203,6 +203,44 @@ variables documented in each runner.
 The Well registry helper is `scripts/data/download_thewell_registry.py`; it
 does not bypass or replace the upstream data license.
 
+### Path configuration (no script editing required)
+
+All public launchers infer the repository root from their own location and use
+repository-relative defaults. No author-specific mount path is required. To
+keep a dataset, checkpoint bundle, or output directory elsewhere, set the
+corresponding environment variable on the command line; values may be absolute
+or relative paths.
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `PROJECT_ROOT` | Repository checkout | inferred automatically |
+| `DATA_PATH` | Dataset path for the HCP, The Well, or WB2 training runner | dataset-specific path under `data/` or `external/` |
+| `HCP_DATA_PATH` | HCP path used by frozen-checkpoint probes | `data/hcp_movie_features` |
+| `WELL_REPO` | Checkout containing The Well data utilities | `external/the_well` |
+| `PREPARED_NPZ` | One prepared ETT or other temporal archive | derived under `probe_inputs/` |
+| `SAVE_BASE` | Training/checkpoint output root | dataset-specific path under `experiments/` |
+| `ROOT`, `OUT`, `OUT_ROOT` | Figure-specific input/output override | documented in each reproduction wrapper |
+
+For example, an HCP run with data and outputs outside the checkout is:
+
+```bash
+DATA_PATH=/datasets/hcp_movie_features \
+SAVE_BASE=/scratch/internal_dw/hcp_runs \
+GPUS=0,1,2,3 SEEDS=0 \
+  bash scripts/train/train_hcp_resgrad_mamba_v2.sh
+```
+
+The HCP component of the frozen-checkpoint diagnostic can be redirected in the
+same way:
+
+```bash
+HCP_DATA_PATH=/datasets/hcp_movie_features GPU=0 DATASETS=fmri \
+  bash scripts/probes/run_added_noise_response_all.sh
+```
+
+If a required path is absent, the runner exits with the missing variable and
+path instead of silently falling back to a private server mount.
+
 Large checkpoints and result ledgers are not stored in Git. Public releases
 should attach them as a versioned archive with checksums and preserve the
 relative paths expected by the reproduction scripts.

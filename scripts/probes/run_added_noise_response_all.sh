@@ -13,7 +13,7 @@ FORCE="${FORCE:-0}"
 PIPELINE_BATCHES="${PIPELINE_BATCHES:-480}"
 NOISE_DRAWS="${NOISE_DRAWS:-64}"
 PRIOR_NOISE_DRAWS="${PRIOR_NOISE_DRAWS:-8}"
-HCP_DATA_PATH="${HCP_DATA_PATH:-/mnt/public/Data/HCP_fMRI_Video_Task/clip_sdxl_features_atlas}"
+HCP_DATA_PATH="${HCP_DATA_PATH:-data/hcp_movie_features}"
 
 if [[ "${GPU}" == *,* || "${GPU}" == *" "* || "${WORLD_SIZE:-1}" != 1 ]]; then
   echo "[fatal] Figure 5(b) probes require one physical GPU id" >&2
@@ -85,7 +85,11 @@ run_prior() {
       artifact=artifacts/internal_dw_prior_fmri_v1/hcp_movie1_seed0_subject_crossfit_templates_K64.npz
       out_root=probe_outputs/real_internal_dw_prior_noise_response_v1/fmri
       probe=scripts/probes/probe_fmri_prior_noise_response.py
-      [[ -d "${HCP_DATA_PATH}" ]] || { echo "[fatal] missing ${HCP_DATA_PATH}" >&2; exit 3; }
+      [[ -d "${HCP_DATA_PATH}" ]] || {
+        echo "[fatal] missing HCP data directory: ${HCP_DATA_PATH}" >&2
+        echo "Set HCP_DATA_PATH=/path/to/hcp_movie_features and rerun." >&2
+        exit 3
+      }
       data_args=(--hcp-dir "${HCP_DATA_PATH}" --hcp-split val --movie 1 --roi-dim 400 --data-preprocess none --hidden 4096 --depth 4 --K 64 --burnin 32 --batch 8 --draws 4)
       ;;
   esac

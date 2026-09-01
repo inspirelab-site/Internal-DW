@@ -75,9 +75,10 @@ Usage
       --out reach_ieeg.npz
 
   # HCP fMRI (batch axis = subjects at ONE movie timepoint)
+  export HCP_DATA_PATH=/path/to/hcp_movie_features
   python scripts/probes/probe_reach_vjp.py \
       --ckpt experiments/hcp_movie1/dual_wiener_screen/.../seed0/last.pth \
-      --hcp-dir /mnt/public/Data/HCP_fMRI_Video_Task/clip_sdxl_features_atlas \
+      --hcp-dir "${HCP_DATA_PATH}" \
       --movie 1 --hidden 4096 --K 64 --burnin 32 --batch 4 --draws 3 \
       --out reach_fmri.npz
 """

@@ -6,6 +6,10 @@ Every script accepts one of two modes:
 - `run`: recompute the underlying experiment, then render it. This may require
   GPUs, licensed datasets, and the checkpoints described in the root README.
 
+Do not edit these scripts to insert machine-specific paths. Set `DATA_PATH`,
+`HCP_DATA_PATH`, `WELL_REPO`, `PREPARED_NPZ`, or `SAVE_BASE` when invoking a
+runner, as described in the root README's **Path configuration** section.
+
 Run the public API smoke test first:
 
 ```bash
