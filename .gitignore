@@ -113,6 +113,7 @@ conda-env/
 !/scripts/utils/
 !/scripts/reproduce/
 !/scripts/reproduce/**
+!/scripts/utils/check_install.py
 !/scripts/utils/check_ddp_cuda.py
 !/scripts/data/download_thewell_registry.py
 !/scripts/data/enrich_fmri_drive_history_map.py

@@ -2,23 +2,23 @@
 
 Reader-facing commands are organized by task rather than by server:
 
-| Directory | Files | Share of 83 lower-level public scripts | Purpose |
+| Directory | Files | Share of 84 lower-level public scripts | Purpose |
 |---|---:|---:|---|
-| `probes/` | 29 | 34.94% | Six paper diagnostic families plus their runners and shared machinery |
-| `plotting/` | 15 | 18.07% | Only the final paper figures and their shared style/data helpers |
-| `train/` | 11 | 13.25% | Matched training arms and timing/fixed-horizon cells |
-| `data/` | 11 | 13.25% | Dataset generation, preparation, and domain-prior construction |
-| `evaluate/` | 9 | 10.84% | Standardized checkpoint evaluation; no plotting or selection |
-| `results/` | 7 | 8.43% | Validation-only selection and JSON/table result assembly |
-| `utils/` | 1 | 1.20% | Environment validation |
-| **Total** | **83** | **100%** | |
+| `probes/` | 29 | 34.52% | Six paper diagnostic families plus their runners and shared machinery |
+| `plotting/` | 15 | 17.86% | Only the final paper figures and their shared style/data helpers |
+| `train/` | 11 | 13.10% | Matched training arms and timing/fixed-horizon cells |
+| `data/` | 11 | 13.10% | Dataset generation, preparation, and domain-prior construction |
+| `evaluate/` | 9 | 10.71% | Standardized checkpoint evaluation; no plotting or selection |
+| `results/` | 7 | 8.33% | Validation-only selection and JSON/table result assembly |
+| `utils/` | 2 | 2.38% | Installation and multi-GPU environment validation |
+| **Total** | **84** | **100%** | |
 
 `reproduce/` is a separate ten-script facade organized in paper order. Most
 readers should start there and never call the lower-level files directly.
 
 A path- and definition-level audit separated the helpers used by the paper
 from standalone exploratory experiments that happened to share the same
-modules. The resulting self-contained closure has 83 lower-level script files
+modules. The resulting self-contained closure has 84 lower-level script files
 and no import from a local-only module. It includes the complete Figure 5(b)
 controlled-noise path rather than retaining precomputed paper values.
 

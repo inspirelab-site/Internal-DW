@@ -17,12 +17,8 @@ dependencies = [
 paper = [
   "h5py",
   "matplotlib",
-  "nibabel",
-  "nilearn",
   "pandas",
-  "scikit-learn",
   "scipy",
-  "seaborn",
 ]
 test = ["pytest>=7"]
 
@@ -32,4 +28,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-

@@ -10,27 +10,30 @@ Wiener gains to the identity and nonlinear route messages during backpropagation
 
 ## Install
 
-Python 3.10+ and PyTorch 2.1+ are required. Install the PyTorch build matching
-your CUDA driver first, then install this repository:
+Python 3.10+ is required. Create and activate the Conda environment, then
+install the PyTorch version used for the paper:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
+conda create -n internal-dw python=3.11 pip -y
+conda activate internal-dw
 python -m pip install --upgrade pip
-python -m pip install -e ".[paper,test]"
+python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu118
+python scripts/utils/check_install.py --require-conda --require-cuda && \
+python -m pip install -e ".[paper,test]" && \
+python -m pip check && \
 bash scripts/reproduce/00_smoke_test.sh
 ```
 
-On a multi-GPU host, verify that the requested PyTorch build sees every CUDA
-device before launching a paper run:
+On a multi-GPU host, verify that PyTorch sees every CUDA device and that NCCL
+collectives work before launching a paper run:
 
 ```bash
 python scripts/utils/check_ddp_cuda.py
 ```
 
 The reusable operator itself depends only on NumPy and PyTorch. The `paper`
-extra installs plotting, neuroimaging, and tabular dependencies used by the
-experiments.
+extra installs the scientific-data, plotting, and tabular dependencies used by
+the released experiments.
 
 ## Add Internal-DW to a model
 
