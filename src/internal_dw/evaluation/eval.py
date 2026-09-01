@@ -4,8 +4,7 @@ import os
 import numpy as np
 import torch
 
-from internal_dw.training.losses import compute_koopman_gramian_loss
-from internal_dw.training.ar_losses import compute_autoregressive_one_step_loss, compute_potential_ae_loss
+from internal_dw.training.ar_losses import compute_autoregressive_one_step_loss
 from internal_dw.data_utils.state_ops import (
     corrcoef_flat,
     get_batch_time_shape,
@@ -16,7 +15,6 @@ from internal_dw.data_utils.state_ops import (
 )
 from internal_dw.evaluation.metrics import relative_l2, trajectory_relative_l2, trajectory_corrcoef_flat
 from internal_dw.utils import unwrap_model
-from internal_dw.training.potential_stageb import stageb_residualize_state, make_joint_state, decode_joint, stageb_prediction_to_next_joint
 
 
 @torch.no_grad()
@@ -32,12 +30,13 @@ def evaluate_loss(model, dataloader, args, rank=0, prefix="val"):
             stim = zero_external_input_like(state, int(getattr(args, "stim_dim", 1)))
         stim = stim.cuda(rank, non_blocking=True).float()
         raw = unwrap_model(model)
-        if getattr(raw, "is_potential_ae", False):
-            loss, logs = compute_potential_ae_loss(model, state, stim, args)
-        elif getattr(raw, "is_standard_autoregressive", False):
+        if getattr(raw, "is_standard_autoregressive", False):
             loss, logs = compute_autoregressive_one_step_loss(model, state, stim, args)
         else:
-            loss, logs = compute_koopman_gramian_loss(model, state, stim, args)
+            raise TypeError(
+                "The paper evaluator supports only standard autoregressive "
+                "backbones."
+            )
         vals.append(float(loss.detach().cpu()))
         for k, v in logs.items():
             logs_accum[k] = logs_accum.get(k, 0.0) + float(v)
@@ -86,383 +85,29 @@ def evaluate_horizon_sweep(model, dataloader, args, rank=0, prefix="test"):
     model.eval()
     raw = unwrap_model(model)
 
-    if getattr(raw, "is_potential_ae", False):
-        return evaluate_potential_ae(model, dataloader, args, rank=rank, prefix=prefix)
-
     if getattr(raw, "is_standard_autoregressive", False):
         if getattr(raw, "is_recurrent_state_ar", False):
             out = evaluate_recurrent_state_horizon_sweep(model, dataloader, args, rank=rank, prefix=prefix)
             out.update(evaluate_recurrent_state_free_rollout(model, dataloader, args, rank=rank, prefix=prefix))
             return out
-        # Existing metrics: one-step autoregressive evaluator.  For
-        # path_generator_field this intentionally calls forward(), which returns
-        # only the first generated frame, so these metrics measure the old
-        # one-step AR-style rollout behavior.
         out = evaluate_standard_ar_horizon_sweep(model, dataloader, args, rank=rank, prefix=prefix)
         if bool(getattr(args, "eval_free_rollout_curves", True)):
             out.update(evaluate_standard_ar_free_rollout_curves(model, dataloader, args, rank=rank, prefix=prefix))
         if _should_eval_field_long_rollout(args):
             out.update(evaluate_field_long_rollout(model, dataloader, args, rank=rank, prefix=prefix))
 
-        # New metrics for finite-horizon path generators: use generate_path() to
-        # produce K frames at a time, then roll out chunk by chunk.  These are
-        # the metrics that correspond to the actual segment-generator idea.
-        if getattr(raw, "is_path_generator", False):
-            out.update(evaluate_path_generator_chunked_horizon_sweep(model, dataloader, args, rank=rank, prefix=prefix))
-            if _should_eval_field_long_rollout(args):
-                out.update(evaluate_path_generator_chunked_long_rollout(model, dataloader, args, rank=rank, prefix=prefix))
         return out
 
-    return evaluate_koopman_refresh_horizon_sweep(model, dataloader, args, rank=rank, prefix=prefix)
+    raise TypeError(
+        "The paper evaluator supports only standard autoregressive backbones."
+    )
 
 
 @torch.no_grad()
-def evaluate_potential_ae(model, dataloader, args, rank=0, prefix="test"):
-    """Report reconstruction metrics for Stage-A potential AE."""
-    model.eval()
-    vals = []
-    r2s = []
-    rels = []
-    mses = []
-    cob_r2s = []
-    cob_corrs = []
-    cob_losses = []
-    cob_fracs = []
-    for batch in dataloader:
-        state, stim, _, _ = unpack_batch(batch)
-        state = state.cuda(rank, non_blocking=True).float()
-        if stim is None:
-            stim = zero_external_input_like(state, int(getattr(args, "stim_dim", 1)))
-        stim = stim.cuda(rank, non_blocking=True).float()
-        loss, logs = compute_potential_ae_loss(model, state, stim, args)
-        vals.append(float(loss.detach().cpu()))
-        r2s.append(float(logs.get("potential_rec_r2", 0.0)))
-        rels.append(float(logs.get("potential_rec_rel_l2", 0.0)))
-        mses.append(float(logs.get("potential_rec_mse", 0.0)))
-        cob_r2s.append(float(logs.get("potential_cob_r2", 0.0)))
-        cob_corrs.append(float(logs.get("potential_cob_corr", 0.0)))
-        cob_losses.append(float(logs.get("potential_cob_loss", 0.0)))
-        cob_fracs.append(float(logs.get("potential_cob_residual_frac", 0.0)))
-    return {
-        f"{prefix}/potential_loss": float(np.mean(vals)) if vals else 0.0,
-        f"{prefix}/potential_rec_r2": float(np.mean(r2s)) if r2s else 0.0,
-        f"{prefix}/potential_rec_rel_l2": float(np.mean(rels)) if rels else 0.0,
-        f"{prefix}/potential_rec_mse": float(np.mean(mses)) if mses else 0.0,
-        f"{prefix}/potential_cob_r2": float(np.mean(cob_r2s)) if cob_r2s else 0.0,
-        f"{prefix}/potential_cob_corr": float(np.mean(cob_corrs)) if cob_corrs else 0.0,
-        f"{prefix}/potential_cob_loss": float(np.mean(cob_losses)) if cob_losses else 0.0,
-        f"{prefix}/potential_cob_residual_frac": float(np.mean(cob_fracs)) if cob_fracs else 0.0,
-    }
-
-
-@torch.no_grad()
-def evaluate_koopman_refresh_horizon_sweep(model, dataloader, args, rank=0, prefix="test"):
-    """Refresh-horizon evaluation for Koopman/Ridge-style models.
-
-    For each H in args.test_horizons, run through the sequence once.  The model
-    is always asked to predict the next frame.  Its prediction is scored at each
-    step.  The rollout history is updated with the prediction except every H
-    steps, where the ground-truth target frame is inserted instead.
-    """
-    model.eval()
-    raw = unwrap_model(model)
-    W = int(args.window_size)
-    horizons = sorted({int(h) for h in args.test_horizons if int(h) >= 1})
-    corr_by_h = {h: [] for h in horizons}
-    rel_l2_by_h = {h: [] for h in horizons}
-
-    for batch in dataloader:
-        state, stim, _, _ = unpack_batch(batch)
-        state = state.cuda(rank, non_blocking=True).float()
-        if stim is None:
-            stim = zero_external_input_like(state, int(getattr(args, "stim_dim", 1)))
-        stim = stim.cuda(rank, non_blocking=True).float()
-        if bool(getattr(args, "stageb_potential_residual", False)):
-            state, _stageb_logs = stageb_residualize_state(state, args)
-        _B, T, _state_shape = get_batch_time_shape(state)
-        if T <= W:
-            continue
-
-        for H in horizons:
-            history = time_window(state, 0, W).clone()
-            steps_since_refresh = 0
-            preds = []
-            targets = []
-
-            for target_t in range(W, T):
-                # Keep the same feature convention as training: predict x[target_t]
-                # from the previous W external inputs [target_t-W, target_t).
-                stim_win = time_window(stim, target_t - W, target_t)
-                z = raw.encode_state(history)
-                z_next = raw.transition_latent(z, stim_win)
-                pred_frame = raw.decode_state(z_next)
-                target_frame = state[:, target_t]
-
-                # Save the model prediction for scoring.  The GT refresh below is
-                # used only to update the future history; it must not replace the
-                # saved prediction trajectory.
-                preds.append(pred_frame.unsqueeze(1))
-                targets.append(target_frame.unsqueeze(1))
-
-                steps_since_refresh += 1
-                if steps_since_refresh >= H:
-                    next_frame = target_frame
-                    steps_since_refresh = 0
-                else:
-                    next_frame = pred_frame
-                history = append_time_point(history, next_frame)
-
-            if preds:
-                pred_seq = torch.cat(preds, dim=1)
-                target_seq = torch.cat(targets, dim=1)
-                corr_by_h[H].append(trajectory_corrcoef_flat(pred_seq, target_seq).detach().cpu())
-                rel_l2_by_h[H].append(trajectory_relative_l2(pred_seq, target_seq).detach().cpu())
-
-    out = {}
-    for h, vals in corr_by_h.items():
-        out[f"{prefix}/horizon_{h}_corr"] = float(torch.stack(vals).mean()) if vals else 0.0
-    for h, vals in rel_l2_by_h.items():
-        out[f"{prefix}/horizon_{h}_rel_l2"] = float(torch.stack(vals).mean()) if vals else 0.0
-    return out
-
-
-
-@torch.no_grad()
-def evaluate_stageb_joint_horizon_sweep(model, dataloader, args, rank=0, prefix="test"):
-    model.eval()
-    W = int(args.window_size)
-    horizons = sorted({int(h) for h in args.test_horizons if int(h) >= 1})
-    corr_by_h = {h: [] for h in horizons}
-    rel_l2_by_h = {h: [] for h in horizons}
-
-    for batch in dataloader:
-        state, stim, _, _ = unpack_batch(batch)
-        state = state.cuda(rank, non_blocking=True).float()
-        if stim is None:
-            stim = zero_external_input_like(state, int(getattr(args, "stim_dim", 1)))
-        stim = stim.cuda(rank, non_blocking=True).float()
-        joint, _ = make_joint_state(state, args)
-        _B, T, _ = get_batch_time_shape(state)
-        if T <= W:
-            continue
-        for H in horizons:
-            history = time_window(joint, 0, W).clone()
-            steps_since_refresh = 0
-            preds, targets = [], []
-            for target_t in range(W, T):
-                stim_win = time_window(stim, target_t - W, target_t)
-                pred = model(stim_win, history, return_aux=False)
-                pred_frame = pred[:, 0] if pred.dim() == joint.dim() else pred
-                pred_joint, _delta_v, _v_next, _r_next = stageb_prediction_to_next_joint(pred_frame, history[:, -1], args)
-                x_pred = decode_joint(pred_joint, args)
-                x_target = state[:, target_t]
-                preds.append(x_pred.unsqueeze(1)); targets.append(x_target.unsqueeze(1))
-                steps_since_refresh += 1
-                if steps_since_refresh >= H:
-                    next_joint = joint[:, target_t]
-                    steps_since_refresh = 0
-                else:
-                    next_joint = pred_joint
-                history = append_time_point(history, next_joint)
-            if preds:
-                pred_seq = torch.cat(preds, dim=1)
-                target_seq = torch.cat(targets, dim=1)
-                corr_by_h[H].append(trajectory_corrcoef_flat(pred_seq, target_seq).detach().cpu())
-                rel_l2_by_h[H].append(trajectory_relative_l2(pred_seq, target_seq).detach().cpu())
-    out = {}
-    for h, vals in corr_by_h.items():
-        out[f"{prefix}/horizon_{h}_corr"] = float(torch.stack(vals).mean()) if vals else 0.0
-    for h, vals in rel_l2_by_h.items():
-        out[f"{prefix}/horizon_{h}_rel_l2"] = float(torch.stack(vals).mean()) if vals else 0.0
-    return out
-
-
-@torch.no_grad()
-def evaluate_stageb_joint_free_rollout_curves(model, dataloader, args, rank=0, prefix="test"):
-    model.eval()
-    W = int(args.window_size)
-    corr_curves=[]; rel_l2_curves=[]; err_norm_curves=[]; err_sq_curves=[]; target_norm_curves=[]; pred_lens=[]
-    for batch in dataloader:
-        state, stim, _, _ = unpack_batch(batch)
-        state = state.cuda(rank, non_blocking=True).float()
-        if stim is None:
-            stim = zero_external_input_like(state, int(getattr(args, "stim_dim", 1)))
-        stim = stim.cuda(rank, non_blocking=True).float()
-        joint, _ = make_joint_state(state, args)
-        _B,T,_ = get_batch_time_shape(state)
-        if T <= W: continue
-        history = time_window(joint,0,W).clone(); preds=[]; targets=[]
-        for target_t in range(W,T):
-            stim_win=time_window(stim,target_t-W,target_t)
-            pred=model(stim_win,history,return_aux=False)
-            pred_frame=pred[:,0] if pred.dim()==joint.dim() else pred
-            pred_joint,_delta_v,_v_next,_r_next=stageb_prediction_to_next_joint(pred_frame, history[:,-1], args)
-            x_pred=decode_joint(pred_joint,args); x_target=state[:,target_t]
-            preds.append(x_pred.unsqueeze(1)); targets.append(x_target.unsqueeze(1))
-            history=append_time_point(history,pred_joint)
-        if not preds: continue
-        pred_seq=torch.cat(preds,dim=1); target_seq=torch.cat(targets,dim=1)
-        err=pred_seq-target_seq; B,L=err.shape[:2]
-        err_flat=err.reshape(B,L,-1); tgt_flat=target_seq.reshape(B,L,-1)
-        err_norm=err_flat.norm(dim=-1); target_norm=tgt_flat.norm(dim=-1).clamp_min(1e-8)
-        corr_curves.append(timestep_flattened_corr(pred_seq,target_seq).detach().cpu())
-        rel_l2_curves.append((err_norm/target_norm).mean(dim=0).detach().cpu())
-        err_norm_curves.append(err_norm.mean(dim=0).detach().cpu())
-        err_sq_curves.append(err_flat.pow(2).sum(dim=-1).mean(dim=0).detach().cpu())
-        target_norm_curves.append(target_norm.mean(dim=0).detach().cpu())
-        pred_lens.append(float(L))
-    out={f"{prefix}/free_rollout_context_len":float(W), f"{prefix}/free_rollout_pred_len":float(np.mean(pred_lens)) if pred_lens else float('nan')}
-    if not corr_curves: return out
-    min_len=min(int(c.numel()) for c in corr_curves)
-    corr=torch.stack([c[:min_len] for c in corr_curves]).mean(0)
-    rel=torch.stack([c[:min_len] for c in rel_l2_curves]).mean(0)
-    errn=torch.stack([c[:min_len] for c in err_norm_curves]).mean(0)
-    errs=torch.stack([c[:min_len] for c in err_sq_curves]).mean(0)
-    tgtn=torch.stack([c[:min_len] for c in target_norm_curves]).mean(0)
-    out[f"{prefix}/free_rollout_corr_mean"]=float(corr.mean()); out[f"{prefix}/free_rollout_rel_l2_mean"]=float(rel.mean())
-    out[f"{prefix}/free_rollout_error_norm_final"]=float(errn[-1]); out[f"{prefix}/free_rollout_error_sq_final"]=float(errs[-1])
-    out[f"{prefix}/free_rollout_corr_curve"]=[float(x) for x in corr.tolist()]
-    out[f"{prefix}/free_rollout_rel_l2_curve"]=[float(x) for x in rel.tolist()]
-    out[f"{prefix}/free_rollout_error_norm_curve"]=[float(x) for x in errn.tolist()]
-    out[f"{prefix}/free_rollout_error_sq_curve"]=[float(x) for x in errs.tolist()]
-    out[f"{prefix}/free_rollout_target_norm_curve"]=[float(x) for x in tgtn.tolist()]
-    return out
-
-
-@torch.no_grad()
-def evaluate_stageb_stim_potential_residual_horizon_sweep(model, dataloader, args, rank=0, prefix="test"):
-    """Refresh-horizon evaluation for B: full-x input, residual output.
-
-    Frozen Stage A rolls v by v <- v + G(u).  The AR model predicts only the
-    residual r, and the scored prediction is x = D(v) + r.
-    """
-    from internal_dw.training.potential_stageb import get_stageb_potential_model, stageb_stim_context_window
-
-    model.eval()
-    W = int(args.window_size)
-    horizons = sorted({int(h) for h in args.test_horizons if int(h) >= 1})
-    corr_by_h = {h: [] for h in horizons}
-    rel_l2_by_h = {h: [] for h in horizons}
-    pot = get_stageb_potential_model(args, rank)
-
-    for batch in dataloader:
-        state, stim, _, _ = unpack_batch(batch)
-        state = state.cuda(rank, non_blocking=True).float()
-        if stim is None:
-            stim = zero_external_input_like(state, int(getattr(args, "stim_dim", 1)))
-        stim = stim.cuda(rank, non_blocking=True).float()
-        _B, T, _ = get_batch_time_shape(state)
-        if T <= W:
-            continue
-
-        for H in horizons:
-            history = time_window(state, 0, W).clone()
-            v_prev = pot.encode(state[:, W-1]).detach()
-            steps_since_refresh = 0
-            preds, targets = [], []
-            for target_t in range(W, T):
-                stim_win = time_window(stim, target_t-W, target_t)
-                pred = model(stim_win, history, return_aux=False)
-                pred_r = pred[:, 0] if pred.dim() == state.dim() else pred
-                stim_ctx = stageb_stim_context_window(stim, target_t, int(getattr(args, "potential_stim_context_len", 1)))
-                v_next = v_prev + pot.stim_delta_context_window(stim_ctx, like_v=v_prev).detach()
-                x_phi = pot.decode(v_next).detach()
-                x_pred = x_phi + pred_r
-                target_frame = state[:, target_t]
-                preds.append(x_pred.unsqueeze(1)); targets.append(target_frame.unsqueeze(1))
-
-                steps_since_refresh += 1
-                if steps_since_refresh >= H:
-                    next_frame = target_frame
-                    v_prev = pot.encode(target_frame).detach()
-                    steps_since_refresh = 0
-                else:
-                    next_frame = x_pred
-                    v_prev = v_next.detach()
-                history = append_time_point(history, next_frame)
-
-            if preds:
-                pred_seq = torch.cat(preds, dim=1)
-                target_seq = torch.cat(targets, dim=1)
-                corr_by_h[H].append(trajectory_corrcoef_flat(pred_seq, target_seq).detach().cpu())
-                rel_l2_by_h[H].append(trajectory_relative_l2(pred_seq, target_seq).detach().cpu())
-    out = {}
-    for h, vals in corr_by_h.items():
-        out[f"{prefix}/horizon_{h}_corr"] = float(torch.stack(vals).mean()) if vals else 0.0
-    for h, vals in rel_l2_by_h.items():
-        out[f"{prefix}/horizon_{h}_rel_l2"] = float(torch.stack(vals).mean()) if vals else 0.0
-    return out
-
-
-@torch.no_grad()
-def evaluate_stageb_stim_potential_residual_free_rollout_curves(model, dataloader, args, rank=0, prefix="test"):
-    from internal_dw.training.potential_stageb import get_stageb_potential_model, stageb_stim_context_window
-
-    model.eval()
-    W = int(args.window_size)
-    corr_curves=[]; rel_l2_curves=[]; err_norm_curves=[]; err_sq_curves=[]; target_norm_curves=[]; pred_lens=[]
-    pot = get_stageb_potential_model(args, rank)
-    for batch in dataloader:
-        state, stim, _, _ = unpack_batch(batch)
-        state = state.cuda(rank, non_blocking=True).float()
-        if stim is None:
-            stim = zero_external_input_like(state, int(getattr(args, "stim_dim", 1)))
-        stim = stim.cuda(rank, non_blocking=True).float()
-        _B, T, _ = get_batch_time_shape(state)
-        if T <= W:
-            continue
-        history = time_window(state, 0, W).clone()
-        v_prev = pot.encode(state[:, W-1]).detach()
-        preds=[]; targets=[]
-        for target_t in range(W, T):
-            stim_win = time_window(stim, target_t-W, target_t)
-            pred = model(stim_win, history, return_aux=False)
-            pred_r = pred[:, 0] if pred.dim() == state.dim() else pred
-            stim_ctx = stageb_stim_context_window(stim, target_t, int(getattr(args, "potential_stim_context_len", 1)))
-            v_next = v_prev + pot.stim_delta_context_window(stim_ctx, like_v=v_prev).detach()
-            x_phi = pot.decode(v_next).detach()
-            x_pred = x_phi + pred_r
-            x_target = state[:, target_t]
-            preds.append(x_pred.unsqueeze(1)); targets.append(x_target.unsqueeze(1))
-            history = append_time_point(history, x_pred)
-            v_prev = v_next.detach()
-        if not preds:
-            continue
-        pred_seq=torch.cat(preds,dim=1); target_seq=torch.cat(targets,dim=1)
-        err=pred_seq-target_seq; B,L=err.shape[:2]
-        err_flat=err.reshape(B,L,-1); tgt_flat=target_seq.reshape(B,L,-1)
-        err_norm=err_flat.norm(dim=-1); target_norm=tgt_flat.norm(dim=-1).clamp_min(1e-8)
-        corr_curves.append(timestep_flattened_corr(pred_seq,target_seq).detach().cpu())
-        rel_l2_curves.append((err_norm/target_norm).mean(dim=0).detach().cpu())
-        err_norm_curves.append(err_norm.mean(dim=0).detach().cpu())
-        err_sq_curves.append(err_flat.pow(2).sum(dim=-1).mean(dim=0).detach().cpu())
-        target_norm_curves.append(target_norm.mean(dim=0).detach().cpu())
-        pred_lens.append(float(L))
-    out={f"{prefix}/free_rollout_context_len":float(W), f"{prefix}/free_rollout_pred_len":float(np.mean(pred_lens)) if pred_lens else float('nan')}
-    if not corr_curves:
-        return out
-    min_len=min(int(c.numel()) for c in corr_curves)
-    corr=torch.stack([c[:min_len] for c in corr_curves]).mean(0)
-    rel=torch.stack([c[:min_len] for c in rel_l2_curves]).mean(0)
-    errn=torch.stack([c[:min_len] for c in err_norm_curves]).mean(0)
-    errs=torch.stack([c[:min_len] for c in err_sq_curves]).mean(0)
-    tgtn=torch.stack([c[:min_len] for c in target_norm_curves]).mean(0)
-    out[f"{prefix}/free_rollout_corr_mean"]=float(corr.mean()); out[f"{prefix}/free_rollout_rel_l2_mean"]=float(rel.mean())
-    out[f"{prefix}/free_rollout_error_norm_final"]=float(errn[-1]); out[f"{prefix}/free_rollout_error_sq_final"]=float(errs[-1])
-    out[f"{prefix}/free_rollout_corr_curve"]=[float(x) for x in corr.tolist()]
-    out[f"{prefix}/free_rollout_rel_l2_curve"]=[float(x) for x in rel.tolist()]
-    out[f"{prefix}/free_rollout_error_norm_curve"]=[float(x) for x in errn.tolist()]
-    out[f"{prefix}/free_rollout_error_sq_curve"]=[float(x) for x in errs.tolist()]
-    out[f"{prefix}/free_rollout_target_norm_curve"]=[float(x) for x in tgtn.tolist()]
-    return out
 
 
 @torch.no_grad()
 def evaluate_standard_ar_horizon_sweep(model, dataloader, args, rank=0, prefix="test"):
-    if bool(getattr(args, "stageb_stim_potential_residual_ar", False)):
-        return evaluate_stageb_stim_potential_residual_horizon_sweep(model, dataloader, args, rank=rank, prefix=prefix)
-    if bool(getattr(args, "stageb_joint_potential_ar", False)):
-        return evaluate_stageb_joint_horizon_sweep(model, dataloader, args, rank=rank, prefix=prefix)
     """Refresh-horizon metrics for ordinary one-step AR models.
 
     horizon H means: free-roll for H predicted steps, then refresh the history
@@ -480,8 +125,6 @@ def evaluate_standard_ar_horizon_sweep(model, dataloader, args, rank=0, prefix="
         if stim is None:
             stim = zero_external_input_like(state, int(getattr(args, "stim_dim", 1)))
         stim = stim.cuda(rank, non_blocking=True).float()
-        if bool(getattr(args, "stageb_potential_residual", False)):
-            state, _stageb_logs = stageb_residualize_state(state, args)
         _B, T, _state_shape = get_batch_time_shape(state)
         if T <= W:
             continue
@@ -985,7 +628,6 @@ def _should_eval_field_long_rollout(args):
         str(getattr(args, "dataset", "")) == "the_well"
         or str(getattr(args, "task_type", "")) == "field2d"
         or str(getattr(args, "evaluator", "")) == "field2d"
-        or str(getattr(args, "model_name", "")) == "koopman_field_gramian"
     )
 
 
@@ -1082,200 +724,9 @@ def evaluate_field_long_rollout(model, dataloader, args, rank=0, prefix="test"):
 
 
 @torch.no_grad()
-def evaluate_path_generator_chunked_horizon_sweep(model, dataloader, args, rank=0, prefix="test"):
-    """Refresh-horizon metrics for path_generator_field using chunked inference.
-
-    This is different from evaluate_standard_ar_horizon_sweep for path generators.
-    The standard evaluator calls model(...), and path_generator_field.forward()
-    intentionally returns only the first generated frame for one-step AR
-    compatibility.  This function calls raw.generate_path(history, horizon=L),
-    so a trained K-step generator actually emits a segment of up to K frames at
-    once before the history is updated.
-
-    For each refresh horizon H, the model free-runs for H scored frames, then
-    the last frame in the history is refreshed with the ground-truth target.
-    If H is larger than the model path_horizon, multiple generated chunks are
-    used before refresh.
-    """
-    model.eval()
-    raw = unwrap_model(model)
-    if not getattr(raw, "is_path_generator", False):
-        return {}
-
-    W = int(args.window_size)
-    K_model = int(getattr(raw, "path_horizon", getattr(args, "pathgen_horizon", 1)))
-    K_model = max(K_model, 1)
-    horizons = sorted({int(h) for h in args.test_horizons if int(h) >= 1})
-    corr_by_h = {h: [] for h in horizons}
-    rel_l2_by_h = {h: [] for h in horizons}
-    used_chunks_by_h = {h: [] for h in horizons}
-
-    for batch in dataloader:
-        state, stim, _, _ = unpack_batch(batch)
-        state = state.cuda(rank, non_blocking=True).float()
-        if stim is None:
-            stim = zero_external_input_like(state, int(getattr(args, "stim_dim", 1)))
-        stim = stim.cuda(rank, non_blocking=True).float()
-        _B, T, _state_shape = get_batch_time_shape(state)
-        if T <= W:
-            continue
-
-        for H in horizons:
-            history = time_window(state, 0, W).clone()
-            target_t = W
-            steps_since_refresh = 0
-            preds = []
-            targets = []
-            used_chunks = []
-
-            while target_t < T:
-                # Do not generate across a refresh boundary.  If H < K_model,
-                # this produces H frames and then refreshes.  If H > K_model,
-                # this produces multiple K_model chunks before refresh.
-                remaining_seq = T - target_t
-                remaining_until_refresh = H - steps_since_refresh
-                chunk_len = min(K_model, remaining_until_refresh, remaining_seq)
-                if chunk_len <= 0:
-                    # Defensive fallback; should not happen unless H is invalid.
-                    chunk_len = min(K_model, remaining_seq)
-                    steps_since_refresh = 0
-
-                if bool(getattr(raw, "uses_future_stimulus", False)):
-                    stim_hist = time_window(stim, max(0, target_t - W), target_t)
-                    stim_future = time_window(stim, target_t, target_t + chunk_len)
-                    path = raw.generate_path(
-                        history, horizon=chunk_len, return_aux=False,
-                        stim_window=stim_hist, stim_future=stim_future,
-                    )
-                else:
-                    path = raw.generate_path(history, horizon=chunk_len, return_aux=False)
-                if path.dim() != state.dim():
-                    raise ValueError(
-                        "Path generator chunked horizon sweep expected path "
-                        f"[B,L,...], got {tuple(path.shape)} with state {tuple(state.shape)}"
-                    )
-
-                target_chunk = state[:, target_t : target_t + chunk_len]
-                preds.append(path)
-                targets.append(target_chunk)
-                used_chunks.append(float(chunk_len))
-
-                # Update history with generated frames.  If this chunk ends at a
-                # refresh boundary, replace only the final history frame by the
-                # corresponding ground-truth target; predictions remain scored.
-                hist_chunk = path
-                steps_since_refresh += chunk_len
-                if steps_since_refresh >= H:
-                    hist_chunk = hist_chunk.clone()
-                    hist_chunk[:, -1] = target_chunk[:, -1]
-                    steps_since_refresh = 0
-
-                history = torch.cat([history, hist_chunk], dim=1)[:, -W:].contiguous()
-                target_t += chunk_len
-
-            if preds:
-                pred_seq = torch.cat(preds, dim=1)
-                target_seq = torch.cat(targets, dim=1)
-                corr_by_h[H].append(trajectory_corrcoef_flat(pred_seq, target_seq).detach().cpu())
-                rel_l2_by_h[H].append(trajectory_relative_l2(pred_seq, target_seq).detach().cpu())
-                used_chunks_by_h[H].extend(used_chunks)
-
-    out = {f"{prefix}/chunked_segment_len": float(K_model)}
-    for h, vals in corr_by_h.items():
-        out[f"{prefix}/chunked_horizon_{h}_corr"] = float(torch.stack(vals).mean()) if vals else 0.0
-    for h, vals in rel_l2_by_h.items():
-        out[f"{prefix}/chunked_horizon_{h}_rel_l2"] = float(torch.stack(vals).mean()) if vals else 0.0
-    for h, vals in used_chunks_by_h.items():
-        out[f"{prefix}/chunked_horizon_{h}_mean_chunk_len"] = float(np.mean(vals)) if vals else 0.0
-    return out
 
 
 @torch.no_grad()
-def evaluate_path_generator_chunked_long_rollout(model, dataloader, args, rank=0, prefix="test"):
-    """DiffusionRollout-style long rollout for path_generator_field using chunks.
-
-    The old evaluate_field_long_rollout calls model(...), so a path generator
-    emits only one frame at a time through forward().  This function calls
-    raw.generate_path() and therefore evaluates the intended segment-level
-    inference: context -> K generated frames -> next context -> K generated
-    frames, until the full future is predicted.
-    """
-    model.eval()
-    raw = unwrap_model(model)
-    if not getattr(raw, "is_path_generator", False):
-        return {}
-
-    W = int(args.window_size)
-    K_model = int(getattr(raw, "path_horizon", getattr(args, "pathgen_horizon", 1)))
-    K_model = max(K_model, 1)
-
-    rel_l2_vals = []
-    pred_lens = []
-    corr_curves = []
-    chunk_lens = []
-
-    for batch in dataloader:
-        state, stim, _, _ = unpack_batch(batch)
-        state = state.cuda(rank, non_blocking=True).float()
-        if stim is None:
-            stim = zero_external_input_like(state, int(getattr(args, "stim_dim", 1)))
-        stim = stim.cuda(rank, non_blocking=True).float()
-
-        B, T, _state_shape = get_batch_time_shape(state)
-        if T <= W:
-            continue
-
-        history = state[:, :W].clone()
-        preds = []
-        t = W
-        while t < T:
-            chunk_len = min(K_model, T - t)
-            path = raw.generate_path(history, horizon=chunk_len, return_aux=False)
-            if path.dim() != state.dim():
-                raise ValueError(
-                    "Path generator chunked long rollout expected path "
-                    f"[B,L,...], got {tuple(path.shape)} with state {tuple(state.shape)}"
-                )
-            preds.append(path)
-            chunk_lens.append(float(chunk_len))
-            history = torch.cat([history, path], dim=1)[:, -W:].contiguous()
-            t += chunk_len
-
-        if not preds:
-            continue
-
-        pred_seq = torch.cat(preds, dim=1)
-        target_seq = state[:, W:T]
-
-        rel_l2_vals.append(trajectory_relative_l2(pred_seq, target_seq).detach().cpu())
-        corr_t = timestep_flattened_corr(pred_seq, target_seq)
-        pred_lens.append(float(pred_seq.shape[1]))
-        corr_curves.append(corr_t.detach().cpu())
-
-    out = {
-        f"{prefix}/chunked_rollout_rel_l2": (
-            float(torch.stack(rel_l2_vals).mean()) if rel_l2_vals else float("nan")
-        ),
-        f"{prefix}/chunked_rollout_context_len": float(W),
-        f"{prefix}/chunked_rollout_segment_len": float(K_model),
-        f"{prefix}/chunked_rollout_mean_chunk_len": (
-            float(np.mean(chunk_lens)) if chunk_lens else float("nan")
-        ),
-        f"{prefix}/chunked_rollout_pred_len": (
-            float(np.mean(pred_lens)) if pred_lens else float("nan")
-        ),
-    }
-
-    if corr_curves:
-        min_len = min(int(c.numel()) for c in corr_curves)
-        curve = torch.stack([c[:min_len] for c in corr_curves], dim=0).mean(dim=0)
-        out[f"{prefix}/chunked_rollout_corr_mean"] = float(curve.mean())
-        out[f"{prefix}/chunked_rollout_corr_auc"] = float(curve.mean())
-        out[f"{prefix}/chunked_rollout_corr_mean_0_32"] = float(curve[: min(32, min_len)].mean())
-        out[f"{prefix}/chunked_rollout_corr_mean_0_64"] = float(curve[: min(64, min_len)].mean())
-        out[f"{prefix}/chunked_rollout_corr_curve"] = [float(x) for x in curve.tolist()]
-
-    return out
 
 
 @torch.no_grad()

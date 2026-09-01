@@ -76,8 +76,6 @@ def _checkpoint_state(checkpoint: dict) -> dict:
 
 def _validate_internal_checkpoint(checkpoint: dict) -> None:
     keys = {str(key).removeprefix("module.") for key in _checkpoint_state(checkpoint)}
-    if any("global_horizon_wiener" in key for key in keys):
-        raise SystemExit("outer global-horizon checkpoint rejected")
     if "dual_wiener.coefficients" not in keys:
         raise SystemExit("checkpoint lacks internal dual_wiener.coefficients")
 
@@ -273,8 +271,6 @@ def main() -> None:
     dw = getattr(raw, "dual_wiener", None)
     if dw is None:
         raise RuntimeError("loaded model has no internal DualWienerController")
-    if getattr(raw, "global_horizon_wiener", None) is not None:
-        raise RuntimeError("outer global-horizon controller rejected")
     recurrent = bool(getattr(raw, "is_recurrent_state_ar", False))
     parameters = [parameter for parameter in raw.parameters() if parameter.requires_grad]
     projection = GradientProjection(parameters, cli.coord_subsample, cli.seed)

@@ -92,7 +92,7 @@ the precise API contract is in
 
 ```text
 src/internal_dw/router.py        public plug-in API
-src/internal_dw/models/          forecasting backbones and DW controller
+src/internal_dw/models/          paper backbones (Mamba, U-Net) and DW controller
 src/internal_dw/datasets/        benchmark dataset adapters
 src/internal_dw/training/        losses, routing, and training loop
 src/internal_dw/evaluation/      rollout evaluation utilities

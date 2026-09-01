@@ -115,12 +115,11 @@ def setup(a) -> Bundle:
 
     sd = load_blob(a.ckpt, a.device)
     dual_coefficients = sd.get("dual_wiener.coefficients")
-    global_weights = sd.get("global_horizon_wiener.weights")
     exact_adapter = bool(getattr(a, "exact_checkpoint_adapter", False))
-    if dual_coefficients is None and global_weights is None and not exact_adapter:
+    if dual_coefficients is None and not exact_adapter:
         raise SystemExit(
-            "checkpoint has neither dual_wiener.coefficients nor "
-            "global_horizon_wiener.weights; pass --exact-checkpoint-adapter only "
+            "checkpoint lacks dual_wiener.coefficients; pass "
+            "--exact-checkpoint-adapter only "
             "for a frozen Exact-BPTT checkpoint"
         )
     if dual_coefficients is not None:
@@ -131,18 +130,6 @@ def setup(a) -> Bundle:
         print(f"[ckpt] controller=routewise max_horizon={max_horizon} depth={depth_ck} "
               f"seen={int(sd.get('dual_wiener.seen_batches', torch.tensor(-1)))} "
               f"solved={int(sd.get('dual_wiener.solved_batches', torch.tensor(-1)))}", flush=True)
-    elif global_weights is not None:
-        # Frozen global-horizon checkpoints share the identical backbone but do
-        # not contain an internal Dual-Wiener controller.  Build a temporary
-        # all-open route controller solely so the existing VJP probes can reuse
-        # one setup path; none of its freshly initialized moments are used.
-        max_horizon = int(global_weights.numel())
-        depth_ck = int(a.depth)
-        print(
-            f"[ckpt] controller=global_horizon max_horizon={max_horizon} "
-            f"depth={depth_ck}; probe adapter routes will be forced fully open",
-            flush=True,
-        )
     else:
         # Exact-BPTT checkpoints contain only the backbone.  A probe still
         # needs the route autograd nodes in order to observe identity and

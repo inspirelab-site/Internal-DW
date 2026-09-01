@@ -226,14 +226,5 @@ def infer_thewell_shape(args, train_loader) -> None:
     args.field_channels = int(state.shape[1])
     args.field_height = int(state.shape[2])
     args.field_width = int(state.shape[3])
-    if str(getattr(args, "model_name", "")) in {
-        "official_mamba_state",
-        "official_pc_mamba_state",
-        "official_atlas_mamba_state",
-        "official_tangent_atlas_mamba_state",
-        "official_shadow_perturb_mamba",
-        "shadow_perturb_mamba",
-        "official_mamba_fixeda_perturb",
-        "cyclic_graph_ar",
-    }:
+    if str(getattr(args, "model_name", "")) == "official_mamba_state":
         args.roi_dim = int(state[0].numel())

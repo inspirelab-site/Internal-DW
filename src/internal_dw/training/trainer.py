@@ -4,7 +4,6 @@ import errno
 import json
 import math
 import os
-import random
 import shutil
 import time
 from pathlib import Path
@@ -13,94 +12,21 @@ import torch
 import torch.distributed as dist
 
 from internal_dw.evaluation.eval import evaluate_loss, evaluate_horizon_sweep, save_eval_json
-from internal_dw.training.losses import compute_koopman_gramian_loss
 from internal_dw.training.ar_losses import (
     compute_autoregressive_one_step_loss,
-    compute_potential_ae_loss,
-    strict_live_frontier_backward,
-    backward_recurrent_state_cto_cut_loss,
 )
-from internal_dw.data_utils.state_ops import unpack_batch, zero_external_input_like, time_window
+from internal_dw.data_utils.state_ops import unpack_batch, zero_external_input_like
 from internal_dw.utils import is_rank0, save_checkpoint, unwrap_model
 
 
 def configure_trainable(model, args, rank=0):
     raw = unwrap_model(model)
-    stage = str(args.koopman_train_stage)
-    if getattr(raw, "is_clock_latent_ae", False):
-        cl_stage = str(getattr(args, "clocklat_stage", "ae"))
-        if hasattr(raw, "configure_trainable"):
-            raw.configure_trainable(
-                stage=cl_stage,
-                freeze_ae=bool(getattr(args, "clocklat_freeze_ae", True)),
-                tune_adapter=bool(getattr(args, "clocklat_tune_adapter", True)),
-            )
-        if is_rank0(rank):
-            total = sum(p.numel() for p in raw.parameters())
-            trainable = sum(p.numel() for p in raw.parameters() if p.requires_grad)
-            print(f"[Trainable] clock-latent AR stage={cl_stage}; trainable={trainable:,}/{total:,}")
-        return
-
-    if getattr(raw, "is_state_sequence_ae", False):
-        st_stage = str(getattr(args, "statetok_stage", "ae"))
-        if hasattr(raw, "configure_trainable"):
-            raw.configure_trainable(
-                stage=st_stage,
-                freeze_ae=bool(getattr(args, "statetok_freeze_ae", True)),
-                tune_adapter=bool(getattr(args, "statetok_tune_adapter", True)),
-            )
-        if is_rank0(rank):
-            total = sum(p.numel() for p in raw.parameters())
-            trainable = sum(p.numel() for p in raw.parameters() if p.requires_grad)
-            print(f"[Trainable] state-sequence AE stage={st_stage}; trainable={trainable:,}/{total:,}")
-        return
-
-    if getattr(raw, "is_standard_autoregressive", False):
-        if is_rank0(rank):
-            total = sum(p.numel() for p in raw.parameters())
-            trainable = sum(p.numel() for p in raw.parameters() if p.requires_grad)
-            print(f"[Trainable] standard autoregressive model; trainable={trainable:,}/{total:,}")
-        return
-    if not getattr(raw, "use_koopman_encoder", False):
-        if is_rank0(rank):
-            print(f"[Trainable] raw Koopman mode; ignoring stage={stage}")
-        return
-
-    for p in raw.parameters():
-        p.requires_grad = False
-
-    def enable(module):
-        if module is not None:
-            for p in module.parameters():
-                p.requires_grad = True
-
-    stim_modules = [raw.stim_in, raw.stim_seq_in, raw.stim_encoder, raw.force_head]
-    if stage == "joint" or stage == "finetune":
-        for p in raw.parameters():
-            p.requires_grad = True
-    elif stage == "ae":
-        enable(raw.koopman_encoder)
-        enable(raw.koopman_decoder)
-    elif stage == "transition":
-        raw.A_delta.requires_grad = True
-        raw.log_force_scale.requires_grad = True
-        for m in stim_modules:
-            enable(m)
-    elif stage == "adapter": #LoRA-like adapter training
-        if raw.koopman_latent_adapter is None:
-            raise ValueError("koopman_train_stage=adapter requires --koopman_use_latent_adapter")
-        enable(raw.koopman_latent_adapter)
-        raw.A_delta.requires_grad = True
-        raw.log_force_scale.requires_grad = True
-        for m in stim_modules:
-            enable(m)
-    else:
-        raise ValueError(f"Unknown koopman_train_stage={stage}")
-
     if is_rank0(rank):
         total = sum(p.numel() for p in raw.parameters())
         trainable = sum(p.numel() for p in raw.parameters() if p.requires_grad)
-        print(f"[Trainable] stage={stage}; trainable={trainable:,}/{total:,}")
+        print(
+            f"[Trainable] paper backbone; trainable={trainable:,}/{total:,}"
+        )
 
 
 
@@ -488,246 +414,12 @@ def _plot_training_curves(exp_dir: str) -> None:
             fig.savefig(Path(exp_dir) / "ftg_ratio_curves.png")
         plt.close(fig)
 
-def _etm_stage_name_for_trainer(args, epoch: int | float = 0) -> str:
-    start = int(getattr(args, "etm_start_epoch", 0))
-    j_epochs = max(0, int(getattr(args, "etm_j_only_epochs", 0)))
-    ep = float(epoch or 0)
-    if ep < start:
-        return "warmup"
-    if j_epochs > 0 and ep < start + j_epochs:
-        return "j_only"
-    return "joint"
-
-
-def _is_etm_parameter_name(name: str) -> bool:
-    # Current AR transport modules are named etm_head / etm_future_proj and
-    # related buffers/parameters contain the substring "etm_".
-    return "etm_" in str(name)
-
-
-def _apply_etm_stage_freezing(model, args, epoch: int | float = 0) -> tuple[str, int, int]:
-    """Freeze/unfreeze parameters for staged ETM training.
-
-    warmup: ordinary AR training; optionally freeze ETM head.
-    j_only: freeze non-ETM parameters, train only ETM head with fit loss.
-    joint:  unfreeze everything for joint fine-tuning.
-
-    The optimizer is created once over all parameters.  Toggling requires_grad
-    per epoch is enough: frozen parameters receive no gradients, and when they
-    are unfrozen they are still present in the optimizer.
-    """
-    stage = _etm_stage_name_for_trainer(args, epoch)
-    freeze_j_only = bool(getattr(args, "etm_freeze_backbone_during_j_only", True))
-    freeze_etm_before_start = bool(getattr(args, "etm_freeze_etm_before_start", True))
-
-    trainable = 0
-    frozen = 0
-    for name, p in model.named_parameters():
-        is_etm = _is_etm_parameter_name(name)
-        if stage == "j_only" and freeze_j_only:
-            req = is_etm
-        elif stage == "warmup" and freeze_etm_before_start:
-            req = not is_etm
-        else:
-            req = True
-        p.requires_grad_(req)
-        if req:
-            trainable += int(p.numel())
-        else:
-            frozen += int(p.numel())
-    return stage, trainable, frozen
-
-
-def _sample_resgrad_ratios(raw, state, stim, burn, K, num_starts):
-    """No-grad closed-loop rollout that only samples per-block dynamic-ratio values.
-
-    Mirrors the burn-in + K-step closed-loop structure used by
-    compute_recurrent_state_bptt_loss, but skips losses and target lookups
-    entirely. The forward value of a residual block is identical regardless
-    of its gradient-routing gate, so sampling under no_grad does not bias
-    the ratio distribution relative to what the real (grad-tracked) rollout
-    would see.
-    """
-    B, T = state.shape[0], state.shape[1]
-    max_start = T - K
-    if max_start < 1:
-        return []
-    min_start = burn if max_start >= burn else 1
-    starts = list(range(min_start, max_start + 1))
-    if not starts:
-        return []
-    chosen = random.sample(starts, min(num_starts, len(starts)))
-
-    ratios: list = []
-    with torch.no_grad():
-        for start_t in chosen:
-            burn_start = max(0, start_t - burn)
-            burn_end = max(burn_start, start_t - 1)
-            h = raw.init_state(B, state.device, state.dtype)
-            for j in range(burn_start, burn_end):
-                stim_j = stim[:, j] if stim is not None else None
-                _, h = raw.step(h, state[:, j], stim_j, return_aux=False)
-            x_in = state[:, start_t - 1]
-            for k in range(K):
-                target_t = start_t + k
-                stim_in = stim[:, target_t - 1] if stim is not None else None
-                pred, h, _aux = raw.step(
-                    h, x_in, stim_in, return_aux=True,
-                    horizon_index=k, total_horizon=K,
-                    ratio_collector=ratios,
-                )
-                x_in = pred
-    return ratios
-
-
-def _sample_resgrad_ratios_windowed(raw, state, stim, window, K, num_starts):
-    """No-grad closed-loop rollout for windowed-history AR models (e.g. unet_field).
-
-    Mirrors the K-step closed-loop structure used by
-    compute_full_bptt_rollout_loss (ar_losses.py), but skips losses/targets
-    entirely and only samples per-block dynamic-ratio values via
-    ratio_collector. Forward values do not depend on the gradient-routing
-    gate, so sampling under no_grad does not bias the ratio distribution
-    relative to what the real (grad-tracked) rollout would see.
-    """
-    B, T = state.shape[0], state.shape[1]
-    max_start = T - K
-    if max_start < window:
-        return []
-    starts = list(range(window, max_start + 1))
-    if not starts:
-        return []
-    chosen = random.sample(starts, min(num_starts, len(starts)))
-
-    ratios: list = []
-    with torch.no_grad():
-        for start_t in chosen:
-            history = time_window(state, start_t - window, start_t)
-            for k in range(K):
-                target_t = start_t + k
-                stim_window = time_window(stim, target_t - window, target_t) if stim is not None else None
-                pred = raw(
-                    stim_window, history, return_aux=False,
-                    horizon_index=k, total_horizon=K,
-                    ratio_collector=ratios,
-                )
-                history = torch.cat([history[:, 1:], pred], dim=1)
-    return ratios
-
-
-def calibrate_resgrad_ratio_threshold(model, state, stim, args, rank=0):
-    """Auto-calibrate --resgrad_ratio_threshold to a target branch-open fraction.
-
-    Dynamic-ratio routing gates each residual branch by comparing its
-    branch/residual norm ratio against a fixed threshold. That ratio's scale
-    is set by the model's *current* weights, so it drifts across seeds and
-    can drift quickly within a single epoch -- early training (especially
-    epoch 1, right after random init) can shift the ratio distribution
-    batch to batch, so calibrating once per epoch can go stale before the
-    epoch is over and open far more branches than intended, risking OOM.
-    This is meant to be called every batch (or every few batches) using
-    that batch's own (state, stim), so the threshold tracks the model's
-    current ratio distribution closely instead of a possibly-stale
-    once-per-epoch snapshot.
-    """
-    raw = unwrap_model(model)
-    target = float(getattr(args, "resgrad_target_open_frac", 0.0))
-    if target <= 0.0 or not bool(getattr(raw, "resgrad_routing", False)):
-        return None
-    num_starts = max(1, int(getattr(args, "resgrad_calib_num_starts", 4)))
-
-    if bool(getattr(raw, "is_recurrent_state_ar", False)):
-        burn = max(0, int(getattr(args, "mamba_burnin", 64)))
-        K = max(1, int(getattr(args, "mamba_bptt_horizon", 8)))
-        ratios = _sample_resgrad_ratios(raw, state, stim, burn, K, num_starts)
-    else:
-        window = max(1, int(getattr(args, "window_size", 4)))
-        K = max(1, int(getattr(args, "bptt_horizon", 8)))
-        ratios = _sample_resgrad_ratios_windowed(raw, state, stim, window, K, num_starts)
-    if not ratios:
-        torch.cuda.empty_cache()
-        return None
-    q = max(0.0, min(1.0, 1.0 - target))
-    threshold = float(torch.quantile(torch.tensor(ratios), q))
-    # Optional EMA smoothing of the calibrated threshold (--resgrad_calib_ema,
-    # default 0.0 = off, preserving the original per-batch behavior). At
-    # intermediate targets (e.g. 0.5) the quantile sits at the *median* of the
-    # ratio distribution, where per-batch sampling noise in the threshold flips
-    # the largest number of gates batch-to-batch ("selection churn"); smoothing
-    # the threshold removes the calibration-noise component of that churn while
-    # still tracking slow drift of the ratio distribution.
-    ema = float(getattr(args, "resgrad_calib_ema", 0.0))
-    raw_threshold = threshold
-    if ema > 0.0:
-        prev = getattr(raw, "_resgrad_calib_ema_prev", None)
-        if prev is not None:
-            threshold = ema * float(prev) + (1.0 - ema) * threshold
-        raw._resgrad_calib_ema_prev = threshold
-    raw.resgrad_ratio_threshold = threshold
-    if is_rank0(rank):
-        ema_note = f" (raw={raw_threshold:.4f}, ema={ema:.2f})" if ema > 0.0 else ""
-        print(
-            f"[ResGrad calib] target_open_frac={target:.3f} -> threshold={threshold:.4f} (n={len(ratios)}){ema_note}",
-            flush=True,
-        )
-    # The no-grad calibration rollout and the grad-tracked training rollout
-    # that immediately follows have very different memory shapes (no
-    # activations to retain vs. a full backward graph). Without an explicit
-    # empty_cache(), PyTorch's caching allocator can leave calibration's
-    # blocks reserved in a layout that doesn't get reused cleanly by the
-    # training pass, inflating this batch's reported (and real) peak memory.
-    torch.cuda.empty_cache()
-    return threshold
-
-
-def _apply_resgrad_schedule(args, epoch, rank=0):
-    """Schedule the ResGrad open fraction (and, optionally, gradient
-    checkpointing) as a function of epoch, by mutating ``args`` in place.
-
-    Recipe motivated by the short-path/redundancy finding: hold a CHEAP low
-    open fraction for most of training (the routed gradient is direction-
-    preserving, so it reaches the right neighborhood cheaply), then ramp up to
-    (near-)dense for the final epochs to polish under an (almost-)exact
-    gradient. Crucially, gradient checkpointing is turned on for that high-g
-    tail so peak memory never pays dense BPTT's stored-activation cost -- the
-    whole run stays at the checkpointing memory floor while still recovering
-    dense-level accuracy.
-
-    Disabled (returns without touching args) unless
-    ``--resgrad_sched_open_start >= 0``. When active it overrides the static
-    ``--resgrad_target_open_frac`` / ``--recurrent_grad_checkpoint`` per epoch.
-    """
-    start = float(getattr(args, "resgrad_sched_open_start", -1.0))
-    if start < 0.0:
-        return  # no schedule; leave static args untouched
-    end = float(getattr(args, "resgrad_sched_open_end", 1.0))
-    e0 = int(getattr(args, "resgrad_sched_ramp_start_epoch", 0)) or 1
-    e1 = int(getattr(args, "resgrad_sched_ramp_end_epoch", 0)) or int(getattr(args, "num_epochs", 50))
-    if epoch <= e0:
-        g = start
-    elif epoch >= e1:
-        g = end
-    else:
-        frac = (epoch - e0) / max(1, (e1 - e0))
-        g = start + frac * (end - start)
-    args.resgrad_target_open_frac = float(g)
-    ckpt_from = int(getattr(args, "resgrad_sched_ckpt_from_epoch", -1))
-    if ckpt_from >= 0:
-        args.recurrent_grad_checkpoint = bool(epoch >= ckpt_from)
-    if is_rank0(rank):
-        print(
-            f"[ResGrad schedule] epoch {epoch}: target_open_frac={g:.3f} "
-            f"checkpoint={bool(getattr(args, 'recurrent_grad_checkpoint', False))}",
-            flush=True,
-        )
 
 
 def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experiments"):
     raw0 = unwrap_model(model)
     params = [p for p in model.parameters() if p.requires_grad]
-    if getattr(raw0, "is_potential_ae", False):
-        optimizer = torch.optim.AdamW(params, lr=args.base_lr, weight_decay=args.weight_decay)
-    elif getattr(raw0, "is_standard_autoregressive", False):
+    if getattr(raw0, "is_standard_autoregressive", False):
         optimizer_name = str(getattr(args, "ar_optimizer", "adam")).lower()
         if optimizer_name == "sgd":
             momentum = float(getattr(args, "ar_sgd_momentum", 0.0))
@@ -796,15 +488,7 @@ def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experime
 
     for epoch in range(start_epoch, args.num_epochs + 1):
         _reset_cuda_peak_memory(rank, args)
-        etm_stage, etm_trainable_params, etm_frozen_params = _apply_etm_stage_freezing(model, args, epoch)
         model.train()
-        # Epoch-dependent ResGrad open-fraction schedule (cheap routing early,
-        # near-dense + checkpointing late). Mutates args in place; no-op unless
-        # --resgrad_sched_open_start >= 0.
-        _apply_resgrad_schedule(args, epoch, rank=rank)
-        calibrated_resgrad_threshold = None
-        resgrad_target_open_frac = float(getattr(args, "resgrad_target_open_frac", 0.0))
-        calib_every_batches = max(1, int(getattr(args, "resgrad_calib_every_batches", 1)))
         if hasattr(train_loader.sampler, "set_epoch"):
             train_loader.sampler.set_epoch(epoch)
         logs_sum = {}
@@ -818,19 +502,6 @@ def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experime
         # identical to the previous per-batch behavior. Not applied to the
         # manual-backward CTO path (which does its own scaled backward).
         grad_accum = max(1, int(getattr(args, "grad_accum_steps", 1)))
-        batch_global_controller = getattr(
-            unwrap_model(model), "global_horizon_wiener", None
-        )
-        if (
-            batch_global_controller is not None
-            and bool(getattr(batch_global_controller, "batch_conditioned", False))
-            and grad_accum != 1
-        ):
-            raise ValueError(
-                "batch-conditioned global-horizon Wiener defines one joint "
-                "solve over the optimizer batch and therefore requires "
-                "--grad_accum_steps 1; increase local/DDP batch size instead"
-            )
         n_batches_total = len(train_loader)
         fast_train_logging = bool(getattr(args, "fast_train_logging", False))
         synchronize_epoch_timing = bool(
@@ -852,10 +523,6 @@ def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experime
             defer_ddp_sync = (
                 grad_accum > 1
                 and hasattr(model, "require_backward_grad_sync")
-                and not (
-                    bool(getattr(args, "cto_cut_loss", False))
-                    and bool(getattr(args, "cto_cut_sequential_backward", True))
-                )
             )
             if defer_ddp_sync:
                 model.require_backward_grad_sync = sync_gradients
@@ -865,8 +532,6 @@ def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experime
             if stim is None:
                 stim = zero_external_input_like(state, int(getattr(args, "stim_dim", 1)))
             stim = stim.cuda(rank, non_blocking=True).float()
-            if resgrad_target_open_frac > 0.0 and batch_idx % calib_every_batches == 0:
-                calibrated_resgrad_threshold = calibrate_resgrad_ratio_threshold(model, state, stim, args, rank=rank) or calibrated_resgrad_threshold
             if batch_idx % grad_accum == 0:
                 optimizer.zero_grad(set_to_none=True)
             raw = unwrap_model(model)
@@ -874,81 +539,28 @@ def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experime
                 getattr(raw, "dual_wiener", None) is not None
                 and str(getattr(raw, "resgrad_policy", "")).lower() == "dualwiener"
             )
-            global_wiener_active = bool(
-                getattr(raw, "global_horizon_wiener", None) is not None
-            )
             if dual_wiener_active:
                 raw.dual_wiener_begin_batch()
-            if global_wiener_active:
-                raw.global_wiener_begin_batch()
-            used_manual_backward = False
-            if getattr(raw, "is_potential_ae", False):
-                loss, logs = compute_potential_ae_loss(model, state, stim, args, epoch=epoch)
-            elif getattr(raw, "is_standard_autoregressive", False):
-                if (
-                    bool(getattr(raw, "is_recurrent_state_ar", False))
-                    and bool(getattr(args, "cto_cut_loss", False))
-                    and bool(getattr(args, "cto_cut_replace_base", True))
-                    and bool(getattr(args, "cto_cut_sequential_backward", True))
-                    and raw.training
-                ):
-                    # Memory-correct dataset-cut CTO: accumulate gradients from
-                    # A, B, and order-cut losses one graph at a time.  This
-                    # function already calls backward(), so do not call
-                    # loss.backward() again here.
-                    loss, logs = backward_recurrent_state_cto_cut_loss(
-                        model, state, stim, args, epoch=epoch
-                    )
-                    used_manual_backward = True
-                else:
-                    loss, logs = compute_autoregressive_one_step_loss(model, state, stim, args, epoch=epoch)
+            if getattr(raw, "is_standard_autoregressive", False):
+                loss, logs = compute_autoregressive_one_step_loss(
+                    model, state, stim, args, epoch=epoch
+                )
             else:
-                loss, logs = compute_koopman_gramian_loss(model, state, stim, args, epoch=epoch)
-            if not used_manual_backward:
-                if dual_wiener_active:
-                    # Two read-only VJP probes update the lagged 2x2 route
-                    # covariance. autograd.grad returns only root-input VJPs and
-                    # does not add the random probe to parameter .grad fields.
-                    raw.dual_wiener_calibrate()
-                if global_wiener_active:
-                    # K complete horizon gradients and M independent matched
-                    # innovation-score gradient sets define the joint global
-                    # Wiener problem.  DDP reduces gradient features before the
-                    # Gram is formed, and the custom backward-only loss node
-                    # applies this same batch's solved coefficients below.
-                    # DDP's reducer must not treat these read-only autograd.grad
-                    # traversals as optimizer backpropagations.  The Gram is
-                    # synchronized explicitly inside the controller.
-                    if hasattr(model, "no_sync"):
-                        with model.no_sync():
-                            raw.global_wiener_calibrate(params)
-                    else:
-                        raw.global_wiener_calibrate(params)
-                # Scale so the accumulated gradient equals the MEAN over the
-                # effective (grad_accum x local) batch, matching a single large batch.
-                (loss / grad_accum if grad_accum > 1 else loss).backward()
-                if defer_ddp_sync:
-                    # Keep DDP in its normal state outside this micro-batch.
-                    model.require_backward_grad_sync = True
-                if dual_wiener_active:
-                    # Commit covariance and coefficients only after the real
-                    # backward, so each batch uses gains estimated previously.
-                    raw.dual_wiener_end_batch()
-                if global_wiener_active:
-                    raw.global_wiener_end_batch()
-            elif dual_wiener_active:
-                # Manual-backward objectives do not currently build the matched
-                # calibration probes, but the controller still needs its batch
-                # lifecycle closed so lagged residual state cannot leak forward.
+                raise TypeError(
+                    "The paper trainer supports only standard autoregressive "
+                    "backbones."
+                )
+            if dual_wiener_active:
+                # Two read-only VJP probes update the lagged 2x2 route
+                # covariance without adding the probe to parameter gradients.
+                raw.dual_wiener_calibrate()
+            # Scale accumulated gradients to the effective-batch mean.
+            (loss / grad_accum if grad_accum > 1 else loss).backward()
+            if defer_ddp_sync:
+                model.require_backward_grad_sync = True
+            if dual_wiener_active:
+                # Each batch uses gains estimated from previous probes.
                 raw.dual_wiener_end_batch()
-            elif global_wiener_active:
-                raw.global_wiener_end_batch()
-            # Strict live-gradient-frontier BPTT is a manual pruned reverse pass.
-            # It is not part of the returned scalar loss; it directly accumulates
-            # extra gradients into model.parameters() using exact local VJPs.
-            if getattr(raw, "is_standard_autoregressive", False) and bool(getattr(args, "frontier_graph_loss", False)):
-                frontier_logs = strict_live_frontier_backward(model, state, stim, args, epoch=epoch)
-                logs.update(frontier_logs)
             # Step once per accumulation window (and always on the last batch,
             # so a trailing partial window is not dropped).
             if ((batch_idx + 1) % grad_accum == 0) or (batch_idx + 1 == n_batches_total):
@@ -987,13 +599,6 @@ def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experime
         train_logs["train/examples_per_second"] = (
             num_examples_global / max(epoch_wall_seconds, 1e-12)
         )
-        train_logs["train/ar/etm_stage_is_warmup"] = 1.0 if etm_stage == "warmup" else 0.0
-        train_logs["train/ar/etm_stage_is_j_only"] = 1.0 if etm_stage == "j_only" else 0.0
-        train_logs["train/ar/etm_stage_is_joint"] = 1.0 if etm_stage == "joint" else 0.0
-        train_logs["train/ar/etm_trainable_params"] = float(etm_trainable_params)
-        train_logs["train/ar/etm_frozen_params"] = float(etm_frozen_params)
-        if calibrated_resgrad_threshold is not None:
-            train_logs["train/ar/resgrad_calibrated_threshold"] = float(calibrated_resgrad_threshold)
         if bool(getattr(args, "log_gpu_memory", True)):
             train_logs.update(_cuda_memory_logs(rank, prefix="gpu/train"))
         if scheduler is not None:
@@ -1042,7 +647,6 @@ def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experime
                     )
                     print(f"[probe checkpoint] saved epoch {epoch}", flush=True)
                 gate_state = None
-                global_wiener_state = None
                 if bool(getattr(raw, "is_recurrent_state_ar", False)):
                     export_horizon = int(getattr(args, "mamba_bptt_horizon", 1))
                 else:
@@ -1056,17 +660,6 @@ def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experime
                             os.path.join(exp_dir, "dual_wiener_gains_last.json"),
                             gate_state,
                         )
-                if hasattr(raw, "global_wiener_export_state"):
-                    global_wiener_state = raw.global_wiener_export_state(
-                        export_horizon
-                    )
-                    if global_wiener_state is not None:
-                        save_eval_json(
-                            os.path.join(
-                                exp_dir, "global_horizon_wiener_last.json"
-                            ),
-                            global_wiener_state,
-                        )
                 if new_best:
                     save_checkpoint(os.path.join(exp_dir, "best.pth"), model, optimizer, epoch, val_logs, args,
                                     extra=resume_state)
@@ -1074,11 +667,6 @@ def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experime
                         save_eval_json(
                             os.path.join(exp_dir, "dual_wiener_gains.json"),
                             gate_state,
-                        )
-                    if global_wiener_state is not None:
-                        save_eval_json(
-                            os.path.join(exp_dir, "global_horizon_wiener.json"),
-                            global_wiener_state,
                         )
             # Make sure rank 0 has finished writing checkpoints before other ranks continue.
             if dist.is_available() and dist.is_initialized():

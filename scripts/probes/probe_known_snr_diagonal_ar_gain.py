@@ -155,8 +155,6 @@ def _preflight_exact_checkpoint(path: str, requested_seed: int) -> None:
             "--ckpt contains trained Internal-DW coefficients; the gain gate "
             "requires the frozen Exact-BPTT checkpoint"
         )
-    if "global_horizon_wiener.weights" in keys:
-        raise SystemExit("outer global-horizon checkpoint rejected")
     arguments = blob.get("args", {}) if isinstance(blob, dict) else {}
     if isinstance(arguments, dict):
         dataset = arguments.get("dataset")

@@ -10,8 +10,8 @@
 # COND:    the memory-length knob for that dataset (see the case block below).
 #          Each dataset has a LONG-memory and a SHORT-memory setting; the point
 #          of the sweep is to compare arms at a FIXED K while K* changes.
-# METHOD:  ckpt (exact gradient) | tbptt<S> | artbp<L> | none (g=0) |
-#          p<frac> (calibrated, e.g. p0.5)
+# METHOD:  dense | ckpt | tbptt<S> | artbp<L> | dwc<c> | dw | dwstructured
+#          plus the documented oracle/domain DW estimators used by Fig. 4--6.
 #
 # Idempotent: exits if eval_results.json exists (SKIP_EXISTING=0 to force).
 # --resume auto picks up last.pth if interrupted, then auto-tests.
@@ -35,7 +35,7 @@ mkdir -p "$CUDA_MPS_PIPE_DIRECTORY"
 DATASET=${DATASET:?set DATASET (mackey_glass|mackey_glass_driven|narma|ieeg|known_snr_ar|prepared_temporal_autonomous|prepared_temporal_driven)}
 COND=${COND:?set COND (see script header)}
 K=${K:?set K}
-METHOD=${METHOD:?set METHOD (ckpt|none|p<frac>)}
+METHOD=${METHOD:?set METHOD (dense|ckpt|tbptt<S>|artbp<L>|dwc<c>|dw|dwstructured)}
 SEED=${SEED:?set SEED}
 GPU=${GPU:-}
 GPUS=${GPUS:-${GPU}}
@@ -68,11 +68,6 @@ if [[ "${AR_SGD_NESTEROV}" == "1" ]]; then
   SGD_NESTEROV_FLAG=(--ar_sgd_nesterov)
 else
   SGD_NESTEROV_FLAG=(--no-ar_sgd_nesterov)
-fi
-if [[ "${GLOBAL_WIENER_BATCH_CONDITIONED:-1}" == "1" ]]; then
-  GLOBAL_WIENER_BATCH_FLAG=(--global_wiener_batch_conditioned)
-else
-  GLOBAL_WIENER_BATCH_FLAG=(--no-global_wiener_batch_conditioned)
 fi
 if [[ "${AR_SHARED_ROLLOUT_START:-0}" == "1" ]]; then
   AR_SHARED_START_FLAG=(--ar_shared_rollout_start)
@@ -214,9 +209,8 @@ case "${METHOD}" in
            # applied to the autoregressive input and every Mamba state carry.
            # This makes an S sweep change only S, not the backward graph
            # implementation.
-           export RESGRAD_ALPHA_PERIOD="${period}" RESGRAD_ALPHA_VALUE=0.0
            RG=(--no-resgrad_routing --resgrad_policy all --resgrad_block_gate 1.0 \
-               --recurrent_grad_checkpoint --bptt_detach_period 0)
+               --recurrent_grad_checkpoint --bptt_detach_period "${period}")
            TAG="tbptt${period}" ;;
   artbp[0-9]*) length="${METHOD#artbp}"
            if (( length <= 1 )); then
@@ -226,56 +220,6 @@ case "${METHOD}" in
                --recurrent_grad_checkpoint \
                --artbp_expected_segment_length "${length}")
            TAG="artbp${length}" ;;
-  none)  RG=(--resgrad_routing --resgrad_policy none --resgrad_block_gate 0.0 --resgrad_ratio_threshold 0.13 --no-recurrent_grad_checkpoint); TAG="none" ;;
-  p[0-9]*)    frac="${METHOD#p}"
-         RG=(--resgrad_routing --resgrad_policy dynamic_ratio --resgrad_block_gate 0.0 \
-             --resgrad_ratio_threshold 0.13 \
-             --resgrad_target_open_frac "${frac}" \
-             --resgrad_calib_num_starts 4 --resgrad_calib_every_batches 1 --resgrad_calib_ema 0 \
-             --no-recurrent_grad_checkpoint); TAG="p${frac}" ;;
-  # snr<frac>: THE principled gate -- route internal branches by the signal-to-noise
-  # ||Delta||/||sigma|| (sigma = the model's learned noise head, built by --mamba_crps),
-  # calibrated to open fraction <frac>. Unlike dynamic_ratio it CUTS high-amplitude
-  # steps whose amplitude is only large noise (the over-expansion driver). Needs the
-  # decoupled sigma training (MSE-mean + detached-mean CRPS), which --mamba_crps triggers.
-  snr[0-9]*)  frac="${METHOD#snr}"
-         RG=(--resgrad_routing --resgrad_policy snr --resgrad_block_gate 0.0 \
-             --resgrad_ratio_threshold 1.0 \
-             --resgrad_target_open_frac "${frac}" \
-             --resgrad_calib_num_starts 4 --resgrad_calib_every_batches 1 --resgrad_calib_ema 0 \
-             --mamba_crps 1.0 \
-             --no-recurrent_grad_checkpoint); TAG="snr${frac}" ;;
-  # snrt<val>: PARAMETER-FREE SNR gate -- FIXED threshold <val> (no target open
-  # fraction, no calibration). Opens a step iff ||Delta||/||sigma|| >= <val>, so the
-  # open fraction g EMERGES from the data's own SNR (small g on noisy systems, larger
-  # g on signal-rich ones) with the SAME universal threshold. snrt1.0 = "signal
-  # exceeds noise". This is what defeats "just sweep K": the threshold is not tuned
-  # per dataset. (If it opens ~nothing, the ||Delta||/||sigma|| scale is off -- report g.)
-  snrt*) thr="${METHOD#snrt}"
-         RG=(--resgrad_routing --resgrad_policy snr --resgrad_block_gate 0.0 \
-             --resgrad_ratio_threshold "${thr}" \
-             --resgrad_target_open_frac 0 \
-             --mamba_crps 1.0 \
-             --no-recurrent_grad_checkpoint); TAG="snrt${thr}" ;;
-  # snrk: SOFT Kalman-gain SNR gate -- per step m = SNR^2/(1+SNR^2), SNR=||Delta||/||sigma||.
-  # No threshold, no target fraction: the (soft, per-step) gate IS the optimal
-  # Wiener/Kalman weighting, estimated from the model's own sigma head. Parameter-free
-  # and not brittle (noisy steps get a small nonzero gate, not a hard cut). This is the
-  # principled deployable gate; g emerges as its average.
-  snrk) RG=(--resgrad_routing --resgrad_policy snrk --resgrad_block_gate 0.0 \
-             --resgrad_target_open_frac 0 \
-             --mamba_crps 1.0 \
-             --no-recurrent_grad_checkpoint); TAG="snrk" ;;
-  # coherence: THE derived optimal gate. Each pathway's backward gradient is scaled by
-  # its per-batch coherence c_k = ||E_i g_i||^2 / E_i||g_i||^2 (= the Wiener gain m_k*),
-  # computed in the backward pass. No sigma head, no threshold, no target fraction, no
-  # CRPS -- g emerges from the gradient's cross-start alignment. Needs batch > 1.
-  coh|coherence) RG=(--resgrad_routing --resgrad_policy coherence --resgrad_block_gate 0.0 \
-             --no-recurrent_grad_checkpoint); TAG="coherence" ;;
-  # dual/dualcoh: legacy cross-example coherence proxy.  It is retained only
-  # for reproducing old runs; heterogeneous batch rows do not identify SNR.
-  dual|dualcoh) RG=(--resgrad_routing --resgrad_policy dualcoh --resgrad_block_gate 0.0 \
-             --no-recurrent_grad_checkpoint); TAG="dual" ;;
   # dwc<c>: EVALUATION BASELINE ONLY -- the routing operator runs with
   # alpha = m = <c> frozen at every route, no probe and no covariance estimate
   # (DUAL_WIENER_CONST gates both in DualWienerController).  This is the static
@@ -431,188 +375,9 @@ case "${METHOD}" in
              --dual_wiener_min_probes "${DUAL_WIENER_MIN_PROBES:-1}" \
              --dual_wiener_noise_model lagged_residual_bootstrap \
              --no-recurrent_grad_checkpoint); TAG="dualwiener_structured" ;;
-  # Global-horizon Wiener: jointly solve one coefficient per rollout loss in
-  # complete parameter-gradient space.  This is the deployable counterpart of
-  # the global oracle probe; it leaves every internal residual route fully open.
-  ghw|globalwiener|global_horizon_wiener)
-         RG=(--no-resgrad_routing --resgrad_policy all --resgrad_block_gate 1.0 \
-             --global_horizon_wiener \
-             --dual_wiener_ema "${GLOBAL_WIENER_EMA:-0.95}" \
-             --dual_wiener_residual_ema "${GLOBAL_WIENER_RESIDUAL_EMA:-0.99}" \
-             --dual_wiener_warmup_batches "${GLOBAL_WIENER_WARMUP_BATCHES:-8}" \
-             --dual_wiener_probe_every "${GLOBAL_WIENER_PROBE_EVERY:-16}" \
-             --dual_wiener_min_probes "${GLOBAL_WIENER_MIN_PROBES:-4}" \
-             --dual_wiener_noise_model "${GLOBAL_WIENER_NOISE_MODEL:-diagonal_gaussian}" \
-             --global_wiener_ridge "${GLOBAL_WIENER_RIDGE:-1e-8}" \
-             --global_wiener_anchor "${GLOBAL_WIENER_ANCHOR:-0}" \
-             --global_wiener_local_fidelity "${GLOBAL_WIENER_LOCAL_FIDELITY:-0}" \
-             --global_wiener_solver_iters "${GLOBAL_WIENER_SOLVER_ITERS:-256}" \
-             --global_wiener_sketch_dim "${GLOBAL_WIENER_SKETCH_DIM:-8192}" \
-             --global_wiener_sketch_seed "${GLOBAL_WIENER_SKETCH_SEED:-1729}" \
-             --global_wiener_noise_draws "${GLOBAL_WIENER_NOISE_DRAWS:-4}" \
-             --global_wiener_superbatch_groups "${GLOBAL_WIENER_SUPERBATCH_GROUPS:-1}" \
-             "${GLOBAL_WIENER_BATCH_FLAG[@]}" \
-              --no-recurrent_grad_checkpoint)
-         fidelity_tag=${GLOBAL_WIENER_LOCAL_FIDELITY:-0}
-         if [[ "${fidelity_tag}" == "0" || "${fidelity_tag}" == "0.0" || "${fidelity_tag}" == "0.00" ]]; then
-           TAG="global_horizon_wiener"
-         else
-           TAG="global_horizon_wiener_fidelity${fidelity_tag//./p}"
-         fi ;;
-  ghwstatic*|globalwiener_static*|global_horizon_wiener_static*)
-         static_gain="${GLOBAL_WIENER_STATIC_GAIN:-${METHOD##*static}}"
-         [[ "${static_gain}" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]] || {
-           echo "METHOD=${METHOD} needs GLOBAL_WIENER_STATIC_GAIN in [0,1] "
-                "or a suffix such as globalwiener_static0.7" >&2
-           exit 2
-         }
-         static_tag="${static_gain//./p}"
-         RG=(--no-resgrad_routing --resgrad_policy all --resgrad_block_gate 1.0 \
-             --global_horizon_wiener \
-             --global_wiener_static_gain "${static_gain}" \
-             --global_wiener_static_mode "${GLOBAL_WIENER_STATIC_MODE:-delayed_tied}" \
-             --no-global_wiener_batch_conditioned \
-             --no-recurrent_grad_checkpoint)
-         TAG="global_horizon_wiener_static${static_tag}" ;;
-  # Same joint horizon solve, with a training-only domain innovation artifact.
-  # The artifact may contain diagonal variances, a temporally coupled process,
-  # or whole innovation templates; DualWiener's loader selects the appropriate
-  # sampler from its metadata.
-  ghwdomain|globalwiener_domain|global_horizon_wiener_domain)
-         [[ -n "${DUAL_WIENER_INNOVATION_FILE:-}" ]] || {
-           echo "METHOD=${METHOD} needs DUAL_WIENER_INNOVATION_FILE=<domain-estimate.npz>"; exit 2;
-         }
-         [[ -f "${DUAL_WIENER_INNOVATION_FILE}" ]] || {
-           echo "domain innovation estimate not found: ${DUAL_WIENER_INNOVATION_FILE}"; exit 2;
-         }
-         export DUAL_WIENER_INNOVATION_KEY="${DUAL_WIENER_INNOVATION_KEY:-innovation_variance}"
-         domain_noise_model="${GLOBAL_WIENER_NOISE_MODEL:-}"
-         if [[ -z "${domain_noise_model}" ]]; then
-           if [[ "${DUAL_WIENER_INNOVATION_KEY}" == "innovation_templates" ]]; then
-             domain_noise_model="lagged_residual_bootstrap"
-           else
-             domain_noise_model="diagonal_gaussian"
-           fi
-         fi
-         domain_tag="${GLOBAL_WIENER_DOMAIN_TAG:-conditional}"
-         RG=(--no-resgrad_routing --resgrad_policy all --resgrad_block_gate 1.0 \
-             --global_horizon_wiener \
-             --dual_wiener_ema "${GLOBAL_WIENER_EMA:-0.95}" \
-             --dual_wiener_residual_ema "${GLOBAL_WIENER_RESIDUAL_EMA:-0.99}" \
-             --dual_wiener_warmup_batches "${GLOBAL_WIENER_WARMUP_BATCHES:-8}" \
-             --dual_wiener_probe_every "${GLOBAL_WIENER_PROBE_EVERY:-16}" \
-             --dual_wiener_min_probes "${GLOBAL_WIENER_MIN_PROBES:-4}" \
-             --dual_wiener_noise_model "${domain_noise_model}" \
-             --global_wiener_ridge "${GLOBAL_WIENER_RIDGE:-1e-8}" \
-             --global_wiener_anchor "${GLOBAL_WIENER_ANCHOR:-0}" \
-             --global_wiener_local_fidelity "${GLOBAL_WIENER_LOCAL_FIDELITY:-0}" \
-             --global_wiener_solver_iters "${GLOBAL_WIENER_SOLVER_ITERS:-256}" \
-             --global_wiener_sketch_dim "${GLOBAL_WIENER_SKETCH_DIM:-8192}" \
-             --global_wiener_sketch_seed "${GLOBAL_WIENER_SKETCH_SEED:-1729}" \
-             --global_wiener_noise_draws "${GLOBAL_WIENER_NOISE_DRAWS:-4}" \
-             --global_wiener_superbatch_groups "${GLOBAL_WIENER_SUPERBATCH_GROUPS:-1}" \
-             "${GLOBAL_WIENER_BATCH_FLAG[@]}" \
-             --no-recurrent_grad_checkpoint)
-         fidelity_tag=${GLOBAL_WIENER_LOCAL_FIDELITY:-0}
-         if [[ "${fidelity_tag}" == "0" || "${fidelity_tag}" == "0.0" || "${fidelity_tag}" == "0.00" ]]; then
-           TAG="global_horizon_wiener_domain_${domain_tag}"
-         else
-           TAG="global_horizon_wiener_domain_${domain_tag}_fidelity${fidelity_tag//./p}"
-         fi ;;
-  # Hybrid backward operator: first truncate temporal state/carry paths every
-  # S rollout steps (the same semantics as METHOD=tbpttS), then jointly weight
-  # the resulting per-horizon parameter gradients with Global-Horizon Wiener.
-  # The controller's total and innovation probes traverse this already-cut
-  # graph, so it solves for sum_k w_k * g_tilde_k^(S), not for full-BPTT g_k.
-  ghwdomain_tbptt[0-9]*|globalwiener_domain_tbptt[0-9]*|global_horizon_wiener_domain_tbptt[0-9]*)
-         period="${METHOD##*tbptt}"
-         if [[ ! "${period}" =~ ^[0-9]+$ ]] || (( period < 1 )); then
-           echo "Global-Wiener+TBPTT period must be positive, got ${period}" >&2
-           exit 2
-         fi
-         [[ -n "${DUAL_WIENER_INNOVATION_FILE:-}" ]] || {
-           echo "METHOD=${METHOD} needs DUAL_WIENER_INNOVATION_FILE=<domain-estimate.npz>"; exit 2;
-         }
-         [[ -f "${DUAL_WIENER_INNOVATION_FILE}" ]] || {
-           echo "domain innovation estimate not found: ${DUAL_WIENER_INNOVATION_FILE}"; exit 2;
-         }
-         export DUAL_WIENER_INNOVATION_KEY="${DUAL_WIENER_INNOVATION_KEY:-innovation_variance}"
-         export RESGRAD_ALPHA_PERIOD="${period}" RESGRAD_ALPHA_VALUE=0.0
-         domain_tag="${GLOBAL_WIENER_DOMAIN_TAG:-conditional}"
-         RG=(--no-resgrad_routing --resgrad_policy all --resgrad_block_gate 1.0 \
-             --global_horizon_wiener \
-             --dual_wiener_ema "${GLOBAL_WIENER_EMA:-0.95}" \
-             --dual_wiener_residual_ema "${GLOBAL_WIENER_RESIDUAL_EMA:-0.99}" \
-             --dual_wiener_warmup_batches "${GLOBAL_WIENER_WARMUP_BATCHES:-8}" \
-             --dual_wiener_probe_every "${GLOBAL_WIENER_PROBE_EVERY:-16}" \
-             --dual_wiener_min_probes "${GLOBAL_WIENER_MIN_PROBES:-4}" \
-             --dual_wiener_noise_model "${GLOBAL_WIENER_NOISE_MODEL:-diagonal_gaussian}" \
-             --global_wiener_ridge "${GLOBAL_WIENER_RIDGE:-1e-8}" \
-             --global_wiener_anchor "${GLOBAL_WIENER_ANCHOR:-0}" \
-             --global_wiener_local_fidelity "${GLOBAL_WIENER_LOCAL_FIDELITY:-0}" \
-             --global_wiener_solver_iters "${GLOBAL_WIENER_SOLVER_ITERS:-256}" \
-             --global_wiener_sketch_dim "${GLOBAL_WIENER_SKETCH_DIM:-8192}" \
-             --global_wiener_sketch_seed "${GLOBAL_WIENER_SKETCH_SEED:-1729}" \
-             --global_wiener_noise_draws "${GLOBAL_WIENER_NOISE_DRAWS:-4}" \
-             --global_wiener_superbatch_groups "${GLOBAL_WIENER_SUPERBATCH_GROUPS:-1}" \
-             "${GLOBAL_WIENER_BATCH_FLAG[@]}" \
-             --no-recurrent_grad_checkpoint)
-         TAG="global_horizon_wiener_domain_${domain_tag}_tbptt${period}" ;;
-  # oracle: THE CEILING. The mask is not learned -- it comes from the model-free
-  # per-(start,horizon) predictability map e_k(t),
-  # keeping the most-predictable fraction of starts WITHIN each horizon k. This
-  # answers "is there any gate at K=64 that reaches what a per-dataset K-sweep
-  # finds?", which no learned statistic can answer. Needs:
-  #   RESGRAD_ORACLE=<ek_map.npz> RESGRAD_ORACLE_FRAC=<p>
-  oracle) RG=(--resgrad_routing --resgrad_policy oracle --resgrad_block_gate 0.0 \
-             --no-recurrent_grad_checkpoint); TAG="oracle${RESGRAD_ORACLE_FRAC:-0.5}"
-         [[ -n "${RESGRAD_ORACLE:-}" ]] || { echo "METHOD=oracle needs RESGRAD_ORACLE=<ek_map.npz>"; exit 2; }
-         export RESGRAD_ORACLE RESGRAD_ORACLE_FRAC ;;
-  # Placement ablation at a matched open budget: keep the SAME fraction of steps
-  # open but concentrate it at the window's end (tail) vs. spread it evenly
-  # (periodic). tail<n>: open the last n of K steps. periodic<n>: open every n-th
-  # step. Same budget, different position -> tests "which pathways", not "how many".
-  tail*) keep="${METHOD#tail}"
-         RG=(--resgrad_routing --resgrad_policy tail --resgrad_block_gate 0.0 \
-             --resgrad_ratio_threshold 0.13 --resgrad_keep_tail "${keep}" \
-             --no-recurrent_grad_checkpoint); TAG="tail${keep}" ;;
-  periodic*) every="${METHOD#periodic}"
-         RG=(--resgrad_routing --resgrad_policy periodic --resgrad_block_gate 0.0 \
-             --resgrad_ratio_threshold 0.13 --resgrad_keep_every "${every}" \
-             --no-recurrent_grad_checkpoint); TAG="periodic${every}" ;;
-  # ---- TEMPORAL-RESIDUAL (outer) variants -----------------------------------
-  # Same keep/cut budget as tail/head/periodic above, but the gate is applied to
-  # the OUTER per-step residual delta (pred=x_t+delta) with every INTERNAL block
-  # left fully open (--resgrad_outer). This is the theory's per-step Jacobian
-  # I+m*J_F realized one-to-one; the internal-vs-outer pair isolates whether the
-  # routing OBJECT (muddy internal branches) is what costs accuracy at large K.
-  # op<frac>: THE temporal-residual method -- outer Delta gated by the dynamic
-  # ||Delta||/||x_t|| ratio, calibrated to open fraction <frac> (the mechanism's
-  # ratio criterion on the clean per-step object). This is what we compare to K16.
-  op[0-9]*)   frac="${METHOD#op}"
-         RG=(--resgrad_routing --resgrad_outer --resgrad_policy dynamic_ratio --resgrad_block_gate 0.0 \
-             --resgrad_ratio_threshold 0.13 \
-             --resgrad_target_open_frac "${frac}" \
-             --resgrad_calib_num_starts 4 --resgrad_calib_every_batches 1 --resgrad_calib_ema 0 \
-             --no-recurrent_grad_checkpoint); TAG="op${frac}" ;;
-  otail*) keep="${METHOD#otail}"
-         RG=(--resgrad_routing --resgrad_outer --resgrad_policy tail --resgrad_block_gate 0.0 \
-             --resgrad_keep_tail "${keep}" --no-recurrent_grad_checkpoint); TAG="otail${keep}" ;;
-  ohead*) keep="${METHOD#ohead}"
-         RG=(--resgrad_routing --resgrad_outer --resgrad_policy head --resgrad_block_gate 0.0 \
-             --resgrad_keep_tail "${keep}" --no-recurrent_grad_checkpoint); TAG="ohead${keep}" ;;
-  operiodic*) every="${METHOD#operiodic}"
-         RG=(--resgrad_routing --resgrad_outer --resgrad_policy periodic --resgrad_block_gate 0.0 \
-             --resgrad_keep_every "${every}" --no-recurrent_grad_checkpoint); TAG="operiodic${every}" ;;
+  # Historical routing ablations and the superseded global-horizon Wiener\n  # prototype are intentionally not part of the paper release.\n
   *) echo "unknown METHOD ${METHOD}"; exit 2 ;;
 esac
-
-# Cross-backbone controls use the same explicit residual implementation in the
-# open and DW arms.  This avoids comparing PyTorch's opaque TransformerEncoder
-# against the hookable layer solely because one arm needs route access.
-if [[ "${FORCE_HOOKABLE_RESIDUALS:-0}" == "1" && "${METHOD}" == "ckpt" ]]; then
-  RG=(--resgrad_routing --resgrad_policy all --resgrad_block_gate 1.0 --no-recurrent_grad_checkpoint)
-fi
 
 out="${SAVE_BASE}/${DATASET}/${COND}_K${K}/${TAG}/seed${SEED}"
 if [[ "${SKIP_EXISTING}" == "1" && -f "${out}/eval_results.json" ]]; then
@@ -645,22 +410,9 @@ echo "[config] DATASET=${DATASET} COND=${COND} HIDDEN=${HIDDEN} K=${K} METHOD=${
 echo "[config] RECURRENT_EVAL_HORIZON_BATCH=${RECURRENT_EVAL_HORIZON_BATCH} AR_SHARED_ROLLOUT_START=${AR_SHARED_ROLLOUT_START:-0}"
 echo "[config] dataset args: ${DS[*]}"
 
-MODEL_NAME=${MODEL_NAME:-official_mamba_state}
-SIMPLE_DEPTH=${SIMPLE_DEPTH:-4}
-SIMPLE_NHEAD=${SIMPLE_NHEAD:-8}
-if [[ "${MODEL_NAME}" == "official_mamba_state" ]]; then
-  AR_TRAIN_STARTS=1
-  ROLLOUT_GRAPH_ARGS=(--no-bptt_loss)
-else
-  # Standard autoregressive backbones use the generic exact-BPTT rollout.
-  # The loss, horizon, starts, split, and optimizer geometry remain matched to
-  # the Mamba experiment; only the backbone changes.
-  AR_TRAIN_STARTS=${MAMBA_TRAIN_STARTS}
-  ROLLOUT_GRAPH_ARGS=(
-    --bptt_loss --bptt_eval --bptt_horizon "${K}" --bptt_lambda 1.0
-    --bptt_loss_type "${MAMBA_LOSS_TYPE}" --no-bptt_grad_checkpoint
-  )
-fi
+MODEL_NAME=official_mamba_state
+AR_TRAIN_STARTS=1
+ROLLOUT_GRAPH_ARGS=(--no-bptt_loss)
 
 RUNTIME_ARGS=()
 if [[ "${FAST_TRAIN_RUNTIME:-0}" == "1" ]]; then
@@ -675,7 +427,7 @@ python src/main.py \
   --num_workers "${NUM_WORKERS}" \
   --resume "${RESUME}" \
   --model_name "${MODEL_NAME}" \
-  --simple_hidden_dim "${HIDDEN}" --simple_depth "${SIMPLE_DEPTH}" --simple_nhead "${SIMPLE_NHEAD}" --simple_dropout 0.0 --simple_residual \
+  --simple_hidden_dim "${HIDDEN}" \
   --mamba_d_state 16 --mamba_d_conv 4 --mamba_expand 2 \
   --mamba_bptt_horizon "${K}" --mamba_burnin 32 --mamba_train_starts_per_sequence "${MAMBA_TRAIN_STARTS}" \
   --mamba_loss_type "${MAMBA_LOSS_TYPE}" --mamba_loss_decay 1.0 \
@@ -691,8 +443,7 @@ python src/main.py \
   "${DS[@]}" \
   "${RG[@]}" \
   "${RUNTIME_ARGS[@]}" \
-  --no-bridge_control_loss --bridge_control_lambda 0 \
-  --koopman_long_loss none "${ROLLOUT_GRAPH_ARGS[@]}" --no-comp_graph_loss --no-frontier_graph_loss \
+  "${ROLLOUT_GRAPH_ARGS[@]}" \
   --save_root "${out}" ${EXTRA_ARGS:-} 2>&1 | tee -a "mem_${LOGTAG}.log"
 train_rc=${PIPESTATUS[0]}
 if (( train_rc != 0 )); then

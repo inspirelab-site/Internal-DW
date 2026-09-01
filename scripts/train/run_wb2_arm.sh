@@ -113,81 +113,7 @@ case "${METHOD}" in
     )
     GRAPH_ARGS=(--no-bptt_grad_checkpoint --bptt_detach_period 0)
     ;;
-  globalwiener|global_horizon_wiener)
-    TAG=global_horizon_wiener_generic
-    if [[ "${GLOBAL_WIENER_LOCAL_FIDELITY:-0}" != "0" && "${GLOBAL_WIENER_LOCAL_FIDELITY:-0}" != "0.0" ]]; then
-      TAG="${TAG}_fidelity${GLOBAL_WIENER_LOCAL_FIDELITY//./p}"
-    fi
-    SAVE_ROOT=${SAVE_ROOT:-${SAVE_BASE}/${TAG}/seed${SEED}}
-    ROUTE_ARGS=(
-      --no-resgrad_routing --resgrad_policy all --resgrad_block_gate 1.0
-      --global_horizon_wiener
-      --dual_wiener_ema "${GLOBAL_WIENER_EMA:-0.95}"
-      --dual_wiener_residual_ema "${GLOBAL_WIENER_RESIDUAL_EMA:-0.99}"
-      --dual_wiener_warmup_batches "${GLOBAL_WIENER_WARMUP:-8}"
-      --dual_wiener_probe_every "${GLOBAL_WIENER_PROBE_EVERY:-16}"
-      --dual_wiener_min_probes "${GLOBAL_WIENER_MIN_PROBES:-4}"
-      --dual_wiener_noise_model diagonal_gaussian
-      --dual_wiener_max_horizon "${K}"
-      --global_wiener_ridge "${GLOBAL_WIENER_RIDGE:-1e-8}"
-      --global_wiener_local_fidelity "${GLOBAL_WIENER_LOCAL_FIDELITY:-0}"
-      --global_wiener_sketch_dim "${GLOBAL_WIENER_SKETCH_DIM:-8192}"
-      --global_wiener_noise_draws "${GLOBAL_WIENER_NOISE_DRAWS:-4}"
-      --global_wiener_batch_conditioned
-    )
-    GRAPH_ARGS=(--no-bptt_grad_checkpoint --bptt_detach_period 0)
-    ;;
-  globalwiener_domain|global_horizon_wiener_domain)
-    if [[ -n "${DOMAIN_INNOVATION_FILE}" ]]; then
-      [[ -f "${DOMAIN_INNOVATION_FILE}" ]] || {
-        echo "[error] missing DUAL_WIENER_INNOVATION_FILE=${DOMAIN_INNOVATION_FILE}" >&2
-        exit 2
-      }
-      export DUAL_WIENER_INNOVATION_FILE="${DOMAIN_INNOVATION_FILE}"
-    fi
-    export DUAL_WIENER_INNOVATION_KEY="${DOMAIN_INNOVATION_KEY:-innovation_variance}"
-    TAG="global_horizon_wiener_prior_${DOMAIN_TAG:-conditional}"
-    if [[ "${GLOBAL_WIENER_LOCAL_FIDELITY:-0}" != "0" && "${GLOBAL_WIENER_LOCAL_FIDELITY:-0}" != "0.0" ]]; then
-      TAG="${TAG}_fidelity${GLOBAL_WIENER_LOCAL_FIDELITY//./p}"
-    fi
-    SAVE_ROOT=${SAVE_ROOT:-${SAVE_BASE}/${TAG}/seed${SEED}}
-    ROUTE_ARGS=(
-      --no-resgrad_routing --resgrad_policy all --resgrad_block_gate 1.0
-      --global_horizon_wiener
-      --dual_wiener_ema "${GLOBAL_WIENER_EMA:-0.95}"
-      --dual_wiener_residual_ema "${GLOBAL_WIENER_RESIDUAL_EMA:-0.99}"
-      --dual_wiener_warmup_batches "${GLOBAL_WIENER_WARMUP:-8}"
-      --dual_wiener_probe_every "${GLOBAL_WIENER_PROBE_EVERY:-16}"
-      --dual_wiener_min_probes "${GLOBAL_WIENER_MIN_PROBES:-4}"
-      --dual_wiener_noise_model "${GLOBAL_WIENER_NOISE_MODEL:-spatial_spectrum}"
-      --dual_wiener_max_horizon "${K}"
-      --global_wiener_ridge "${GLOBAL_WIENER_RIDGE:-1e-8}"
-      --global_wiener_local_fidelity "${GLOBAL_WIENER_LOCAL_FIDELITY:-0}"
-      --global_wiener_sketch_dim "${GLOBAL_WIENER_SKETCH_DIM:-8192}"
-      --global_wiener_noise_draws "${GLOBAL_WIENER_NOISE_DRAWS:-4}"
-      --global_wiener_batch_conditioned
-    )
-    GRAPH_ARGS=(--no-bptt_grad_checkpoint --bptt_detach_period 0)
-    ;;
-  globalwiener_static*|global_horizon_wiener_static*)
-    STATIC_GAIN="${GLOBAL_WIENER_STATIC_GAIN:-${METHOD##*static}}"
-    [[ "${STATIC_GAIN}" =~ ^(0([.][0-9]+)?|1([.]0+)?)$ ]] || {
-      echo "[error] global static gain must lie in [0,1]; got ${STATIC_GAIN}" >&2
-      exit 2
-    }
-    static_tag="${STATIC_GAIN//./p}"
-    TAG="global_horizon_wiener_static${static_tag}"
-    SAVE_ROOT=${SAVE_ROOT:-${SAVE_BASE}/${TAG}/seed${SEED}}
-    ROUTE_ARGS=(
-      --no-resgrad_routing --resgrad_policy all --resgrad_block_gate 1.0
-      --global_horizon_wiener
-      --global_wiener_static_gain "${STATIC_GAIN}"
-      --global_wiener_static_mode "${GLOBAL_WIENER_STATIC_MODE:-delayed_tied}"
-      --dual_wiener_max_horizon "${K}"
-      --no-global_wiener_batch_conditioned
-    )
-    GRAPH_ARGS=(--no-bptt_grad_checkpoint --bptt_detach_period 0)
-    ;;
+  # Superseded global-horizon Wiener prototypes are omitted from the release.\n
   dwc[0-9]*|static[0-9]*)
     if [[ "${METHOD}" == dwc* ]]; then
       STATIC_GAIN=${METHOD#dwc}
@@ -215,7 +141,7 @@ IFS=',' read -r -a WB2_GPU_IDS <<< "${GPUS}"
 WB2_WORLD_SIZE=${#WB2_GPU_IDS[@]}
 export MASTER_PORT=${MASTER_PORT:-$((49600 + FIRST_GPU * 37 + SEED * 11 + RANDOM % 200))}
 mkdir -p "${SAVE_ROOT}" logs/weatherbench2/four_arm
-MODEL_NAME=${MODEL_NAME:-unet_field}
+MODEL_NAME=unet_field
 
 echo "=== WB2 ${TAG} seed${SEED}; physical_gpus=${GPUS}; world_size=${WB2_WORLD_SIZE}; K=${K}; epochs=${EPOCHS}; resume=${RESUME}; out=${SAVE_ROOT} === $(date)"
 
@@ -226,10 +152,6 @@ python -u src/main.py \
   --model_name "${MODEL_NAME}" \
   --unet_base_channels "${BASE_CH}" --unet_depth "${DEPTH}" --unet_channel_mult 2 \
   --unet_groups 8 --unet_use_grid --no-unet_normalize \
-  --fno_width "${FNO_WIDTH:-64}" --fno_layers "${FNO_LAYERS:-4}" \
-  --fno_modes1 "${FNO_MODES1:-16}" --fno_modes2 "${FNO_MODES2:-16}" \
-  --fno_hidden_channels "${FNO_HIDDEN_CHANNELS:-128}" --fno_backend original \
-  --fno_use_grid --no-fno_normalize \
   --window_size "${WINDOW}" \
   --local_batch_size "${BATCH}" --grad_accum_steps "${GRAD_ACCUM}" --num_workers "${NUM_WORKERS}" \
   --base_lr "${LR}" --weight_decay 1e-4 --grad_clip "${GRAD_CLIP}" \
@@ -241,8 +163,6 @@ python -u src/main.py \
   --bptt_loss --bptt_eval --bptt_horizon "${K}" --bptt_lambda 1.0 --bptt_loss_type rel_l2 \
   --test_horizons 4 8 12 20 28 40 48 \
   "${ROUTE_ARGS[@]}" "${GRAPH_ARGS[@]}" \
-  --no-bridge_control_loss --bridge_control_lambda 0 \
-  --koopman_long_loss none --no-comp_graph_loss --no-frontier_graph_loss \
   --save_root "${SAVE_ROOT}" ${EXTRA_ARGS:-} \
   2>&1 | tee -a "logs/weatherbench2/four_arm/${TAG}_s${SEED}.log"
 
