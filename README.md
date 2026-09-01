@@ -35,6 +35,60 @@ The reusable operator itself depends only on NumPy and PyTorch. The `paper`
 extra installs the scientific-data, plotting, and tabular dependencies used by
 the released experiments.
 
+## Train and test a model
+
+The MG example is the shortest complete training-to-test workflow. Run the two
+matched arms separately:
+
+```bash
+ARM=full_bptt SEED=0 GPU=0 \
+  bash scripts/reproduce/train_test_mg.sh
+
+ARM=internal_dw SEED=0 GPU=0 \
+  bash scripts/reproduce/train_test_mg.sh
+```
+
+Each command first trains with validation-based checkpoint selection and then
+evaluates the selected checkpoint once on the test split. Training and testing
+can also be invoked independently:
+
+```bash
+ARM=internal_dw SEED=0 GPU=0 \
+  bash scripts/reproduce/train_test_mg.sh train
+
+ARM=internal_dw SEED=0 GPU=0 \
+  bash scripts/reproduce/train_test_mg.sh test
+```
+
+By default, the files are written directly to the locations consumed by the
+paper result assembler. Set `SAVE_BASE` and `OUT_ROOT` to place checkpoints and
+test records elsewhere. A completed Internal-DW run prints the two exact paths:
+
+```text
+[checkpoint] experiments/internal_dw_assigned_v1/mackey_glass/tau30_K32/dualwiener_structured/seed0/best.pth
+[test-json] probe_outputs/dense_multistart_rel_l2_1p5k_v1/mg/dw_seed0.json
+[result] mean_relative_l2=... horizons=1:48 lower_is_better=True
+```
+
+The test JSON is intentionally compact. Its first fields identify the dataset,
+method, seed, split, primary metric, and selected checkpoint. `summary` contains
+the aggregate in-horizon, out-of-horizon, and full-range metrics;
+`per_horizon` contains the curve used by plotting code. It does not include
+training diagnostics or per-example prediction arrays. For example:
+
+```bash
+python -c 'import json; r=json.load(open("probe_outputs/dense_multistart_rel_l2_1p5k_v1/mg/dw_seed0.json")); print(r["primary_metric"]); print(r["checkpoint"])'
+```
+
+Training/testing and plotting are separate. Paper plots only read completed
+test/probe JSON files; they never launch training. After the required result
+files have been generated, render one paper item or all available items with:
+
+```bash
+bash scripts/reproduce/05_figure_6.sh
+bash scripts/reproduce/render_all.sh
+```
+
 ## Add Internal-DW to a model
 
 The only architectural edit is made **before** each residual branch:
@@ -109,6 +163,7 @@ scripts/plotting/                final paper plotting only
 scripts/results/                 validation selection and result assembly
 tests/                           numerical and integration tests
 docs/PAPER_CODE_INDEX.md         paper-item to implementation map
+docs/DATA_FORMATS.md             dataset trees, file keys, and tensor contracts
 ```
 
 Cluster launchers, monitoring scripts, checkpoints, generated figures, raw
@@ -119,12 +174,10 @@ The lower-level script counts and functional breakdown are documented in
 
 ## Reproduce the paper
 
-There are two levels of reproduction:
-
-1. `render` rebuilds a paper figure/table from the released compact result
-   ledgers. It is fast and is the default.
-2. `run` recomputes the underlying experiment before rendering. It requires the
-   corresponding datasets/checkpoints and can take multiple GPU-days.
+Paper reproduction has three explicit stages: training writes a validation-
+selected checkpoint, testing writes a compact test JSON, and rendering reads
+only completed JSON/NPZ ledgers. The commands below perform the final rendering
+stage and never retrain a model.
 
 After placing the released result bundle at the repository root (so its
 `probe_outputs/`, `experiments/`, and `artifacts/` paths are preserved), run:
@@ -145,13 +198,6 @@ Or render everything with:
 bash scripts/reproduce/render_all.sh
 ```
 
-Append `run` to an individual command to recompute it, for example:
-
-```bash
-GPUS=0,1,2,3 bash scripts/reproduce/03_figure_4.sh run
-GPU=0 bash scripts/reproduce/06_figures_7_8.sh run
-```
-
 The exact source JSON/NPZ path is recorded beside every generated paper figure.
 See [`scripts/reproduce/README.md`](scripts/reproduce/README.md) and
 [`docs/PAPER_CODE_INDEX.md`](docs/PAPER_CODE_INDEX.md) for the full mapping.
@@ -161,25 +207,27 @@ See [`scripts/reproduce/README.md`](scripts/reproduce/README.md) and
 Figure 6 includes datasets with different licenses and storage layouts, so its
 wrapper never guesses private mount paths. The matched per-dataset runners are:
 
-| Data | Training entry point |
-|---|---|
-| MG, NARMA-5, iEEG, ETTm1, ETTm2 | `scripts/train/run_mem_one.sh` |
-| Movie fMRI | `scripts/train/train_hcp_resgrad_mamba_v2.sh` |
-| Shear flow | `scripts/train/run_thewell_arm.sh` |
-| WeatherBench-2 | `scripts/train/run_wb2_arm.sh` |
+| Data | Training entry point | Test entry point |
+|---|---|---|
+| MG, NARMA-5, iEEG, ETTm1, ETTm2 | `scripts/train/run_mem_one.sh` | `scripts/evaluate/run_assigned_dense_eval_1p5k_one.sh` |
+| Movie fMRI | `scripts/train/train_hcp_resgrad_mamba_v2.sh` | `scripts/evaluate/run_assigned_dense_eval_1p5k_one.sh` |
+| Shear flow | `scripts/train/run_thewell_arm.sh` | `scripts/evaluate/run_assigned_dense_eval_1p5k_one.sh` |
+| WeatherBench-2 | `scripts/train/run_wb2_arm.sh` | `scripts/evaluate/run_assigned_dense_eval_1p5k_one.sh` |
 
-For example, one matched MG seed is launched as:
+For example, train and test one matched MG seed as separate stages:
 
 ```bash
-DATASET=mackey_glass COND=tau30 K=32 METHOD=ckpt SEED=0 GPU=0 \
-  bash scripts/train/run_mem_one.sh
-DATASET=mackey_glass COND=tau30 K=32 METHOD=dwstructured SEED=0 GPU=0 \
-  bash scripts/train/run_mem_one.sh
+ARM=full_bptt SEED=0 GPU=0 bash scripts/reproduce/train_test_mg.sh train
+ARM=internal_dw SEED=0 GPU=0 bash scripts/reproduce/train_test_mg.sh train
+
+ARM=full_bptt SEED=0 GPU=0 bash scripts/reproduce/train_test_mg.sh test
+ARM=internal_dw SEED=0 GPU=0 bash scripts/reproduce/train_test_mg.sh test
 ```
 
-Each low-level runner is idempotent and supports resume. Once all required
-seed-level evaluations exist, `scripts/reproduce/05_figure_6.sh` exports the
-unnormalized ledger and renders the figure.
+Training is resumable and writes `best.pth`; testing is idempotent and writes
+one compact JSON per checkpoint. Once all required seed-level test JSON files
+exist, `scripts/reproduce/05_figure_6.sh` exports the unnormalized ledger and
+renders the figure without touching any checkpoint.
 
 The benchmark controls use the same validation-then-test separation. Static
 gain uses `scripts/train/run_positive_static_gain_one.sh`,
@@ -206,6 +254,26 @@ variables documented in each runner.
 The Well registry helper is `scripts/data/download_thewell_registry.py`; it
 does not bypass or replace the upstream data license.
 
+The loaders expect the following top-level organization by default:
+
+```text
+data/
+  synthetic/                       # generated MG/NARMA/known-SNR caches
+  hcp_movie_features/<subject>/*MOVIE1*.npy
+  ieeg/preprocessed_length_matched/*.fif
+  weatherbench2_1p5_pilot/{metadata.json,*.npy}
+probe_inputs/temporal_candidate_regime_v1/{ettm1,ettm2}.npz
+external/the_well/gradient_pilots/datasets/shear_flow/data/
+  {train,valid,test}/*.h5
+```
+
+The exact file keys, array shapes, accepted alternate paths, preparation
+commands, and the common in-memory sample contract are specified in
+[`docs/DATA_FORMATS.md`](docs/DATA_FORMATS.md). In particular, HCP subject
+files are dictionary-valued `.npy` files containing `fmri` and `z`, prepared
+ETT archives contain fixed `train/validation/test` state and drive arrays, and
+WeatherBench-2 filenames are resolved through `metadata.json`.
+
 ### Path configuration (no script editing required)
 
 All public launchers infer the repository root from their own location and use
@@ -218,6 +286,7 @@ or relative paths.
 |---|---|---|
 | `PROJECT_ROOT` | Repository checkout | inferred automatically |
 | `DATA_PATH` | Dataset path for the HCP, The Well, or WB2 training runner | dataset-specific path under `data/` or `external/` |
+| `DATA_DIR` | Generated synthetic or iEEG cache directory | `data/synthetic` |
 | `HCP_DATA_PATH` | HCP path used by frozen-checkpoint probes | `data/hcp_movie_features` |
 | `WELL_REPO` | Checkout containing The Well data utilities | `external/the_well` |
 | `PREPARED_NPZ` | One prepared ETT or other temporal archive | derived under `probe_inputs/` |

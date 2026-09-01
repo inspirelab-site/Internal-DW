@@ -67,6 +67,7 @@ python -u scripts/evaluate/evaluate_dense_multistart_rel_l2.py \
   --max-origins-per-item "${MAX_ORIGINS}" \
   --origin-batch "${ORIGIN_BATCH}" \
   --num-workers "${NUM_WORKERS}" \
-  --bootstrap-draws "${BOOTSTRAP_DRAWS}"
+  --bootstrap-draws "${BOOTSTRAP_DRAWS}" \
+  --method-label tbptt
 
 echo "[done] ${OUT}"

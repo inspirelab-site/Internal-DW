@@ -141,6 +141,11 @@ export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:Tr
 
 echo "[start] data=${DATA} arm=${ARM} seed=${SEED} train_K=${K} fixed_H=${FIXED_H} split=${SPLIT} physical_gpu=${GPU}"
 echo "[ckpt] ${CKPT}"
+if [[ "${ARM}" == "exact" ]]; then
+  METHOD_LABEL=full_bptt
+else
+  METHOD_LABEL=internal_dw
+fi
 if [[ "${DATA}" == "wb2" ]]; then
   mapfile -t HORIZONS < <(seq 1 "${FIXED_H}")
   python -u scripts/evaluate/evaluate_weatherbench2_acc.py \
@@ -148,6 +153,7 @@ if [[ "${DATA}" == "wb2" ]]; then
     --horizons "${HORIZONS[@]}" --train-horizon "${K}" \
     --batch-size "${WB2_BATCH:-2}" --start-stride "${ORIGIN_STRIDE}" \
     --num-starts "${WB2_NUM_STARTS:-${MAX_ORIGINS}}" --evenly-spaced-starts \
+    --method-label "${METHOD_LABEL}" \
     --out "${OUT}"
 else
   python -u scripts/evaluate/evaluate_dense_multistart_rel_l2.py \
@@ -161,6 +167,7 @@ else
     --max-origins-per-item "${MAX_ORIGINS}" \
     --origin-batch "${ORIGIN_BATCH}" \
     --num-workers "${NUM_WORKERS}" \
-    --bootstrap-draws "${BOOTSTRAP_DRAWS}"
+    --bootstrap-draws "${BOOTSTRAP_DRAWS}" \
+    --method-label "${METHOD_LABEL}"
 fi
 echo "[done] ${OUT}"

@@ -1,10 +1,9 @@
 # Paper reproduction entry points
 
-Every script accepts one of two modes:
-
-- `render` (default): rebuild a figure/table from released JSON/NPZ ledgers.
-- `run`: recompute the underlying experiment, then render it. This may require
-  GPUs, licensed datasets, and the checkpoints described in the root README.
+The numbered scripts are rendering entry points: they rebuild figures and
+tables from completed JSON/NPZ ledgers. Model training and checkpoint testing
+use the separate `scripts/train/` and `scripts/evaluate/` entry points described
+in the root README.
 
 Do not edit these scripts to insert machine-specific paths. Set `DATA_PATH`,
 `HCP_DATA_PATH`, `WELL_REPO`, `PREPARED_NPZ`, or `SAVE_BASE` when invoking a
@@ -15,6 +14,18 @@ Run the public API smoke test first:
 ```bash
 bash scripts/reproduce/00_smoke_test.sh
 ```
+
+The reader-facing MG workflow keeps training and testing explicit while using
+the same output contract as the benchmark evaluators:
+
+```bash
+ARM=full_bptt SEED=0 GPU=0 bash scripts/reproduce/train_test_mg.sh train
+ARM=full_bptt SEED=0 GPU=0 bash scripts/reproduce/train_test_mg.sh test
+```
+
+The `train` phase writes `best.pth`; the `test` phase reads that checkpoint and
+writes one compact test JSON. Omitting the phase runs both in order. Plotting
+entry points consume JSON files only.
 
 Then reproduce paper items in order:
 
@@ -28,14 +39,6 @@ bash scripts/reproduce/06_figures_7_8.sh
 bash scripts/reproduce/07_timing_table.sh
 ```
 
-Figure 5 has two independent frozen-checkpoint diagnostics. Its `run` mode
-first measures held-out gradient utility, then runs the controlled-noise
-response for all eight datasets and assembles
-`probe_outputs/application_diagnostics_v1/added_noise_gain_summary.json`.
-The plotting code reads that ledger; no paper gain values are embedded in the
-plotting module.
-
 Use `bash scripts/reproduce/render_all.sh` after installing the released result
-bundle.  `GPUS=0,1,2,3` selects devices for scripts whose `run` mode supports
-parallel execution; the fixed-horizon and timing wrappers use `GPU=0` by
-default and are safely resumable at their lower-level entry points.
+bundle. The exact train, test, and ledger-builder responsible for each plotted
+input is listed in `docs/PAPER_CODE_INDEX.md`.

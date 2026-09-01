@@ -229,7 +229,7 @@ def standard_origin_chunk(raw, state, stim, origins: Sequence[int], window: int,
 def _bootstrap_interval(values: np.ndarray, draws: int, seed: int = 0):
     values = np.asarray(values, dtype=np.float64)
     if values.size <= 1 or draws <= 0:
-        return [float("nan"), float("nan")]
+        return [None, None]
     rng = np.random.default_rng(int(seed))
     sample = rng.integers(0, values.size, size=(int(draws), values.size))
     estimates = values[sample].mean(axis=1)
@@ -246,15 +246,10 @@ def summarize_unit_origins(
         raise RuntimeError("evaluation produced no valid origins")
     unit_keys = sorted(unit_origins)
     unit_curves = []
-    per_unit = {}
     for key in unit_keys:
         origins = unit_origins[key]
         curve = np.stack([origins[index] for index in sorted(origins)], axis=0).mean(axis=0)
         unit_curves.append(curve)
-        per_unit[key] = {
-            "num_unique_origins": int(len(origins)),
-            "per_horizon_rel_l2": [float(x) for x in curve],
-        }
     curves = np.stack(unit_curves, axis=0)
     mean_curve = curves.mean(axis=0)
     if not 0 < int(train_horizon) <= int(eval_horizon):
@@ -282,7 +277,7 @@ def summarize_unit_origins(
         values = np.asarray(values, dtype=np.float64)
         return {
             "mean": float(values.mean()),
-            "sd_across_units": float(values.std(ddof=1)) if values.size > 1 else float("nan"),
+            "sd_across_units": float(values.std(ddof=1)) if values.size > 1 else None,
             "cluster_bootstrap_95ci": _bootstrap_interval(values, bootstrap_draws),
         }
 
@@ -292,7 +287,9 @@ def summarize_unit_origins(
         "per_horizon": {
             "horizons": list(range(1, int(eval_horizon) + 1)),
             "mean_rel_l2": [float(x) for x in mean_curve],
-            "sd_across_units": [float(x) for x in sd_curve],
+            "sd_across_units": [
+                float(x) if np.isfinite(x) else None for x in sd_curve
+            ],
         },
         "summary": {
             "all_horizons": metric(unit_all),
@@ -313,7 +310,68 @@ def summarize_unit_origins(
             "long_half": {"start_horizon": long_start, **metric(unit_long)},
             "final_horizon": {"horizon": int(eval_horizon), **metric(unit_final)},
         },
-        "per_unit": per_unit,
+    }
+
+
+def build_public_result(
+    aggregate: Mapping[str, Any],
+    *,
+    checkpoint_path: str,
+    checkpoint_epoch: int,
+    dataset: str,
+    model_name: str,
+    method: str,
+    seed: int,
+    split: str,
+    train_horizon: int,
+    eval_horizon: int,
+) -> Dict[str, Any]:
+    """Build the stable, reader-facing test-result schema.
+
+    Execution diagnostics and per-unit curves intentionally stay out of this
+    file. The aggregate curve and uncertainty are sufficient to reproduce the
+    paper metric and plots.
+    """
+    primary = aggregate["summary"]["all_horizons"]
+    return {
+        "format_version": 3,
+        "status": "complete",
+        "dataset": str(dataset),
+        "method": str(method),
+        "seed": int(seed),
+        "split": str(split),
+        "primary_metric": {
+            "name": "mean_relative_l2",
+            "value": float(primary["mean"]),
+            "horizons": f"1:{int(eval_horizon)}",
+            "lower_is_better": True,
+        },
+        "checkpoint": {
+            "path": str(checkpoint_path),
+            "epoch": int(checkpoint_epoch),
+        },
+        "train_horizon": int(train_horizon),
+        "eval_horizon": int(eval_horizon),
+        "summary": aggregate["summary"],
+        "per_horizon": aggregate["per_horizon"],
+        "evaluation": {
+            "model": str(model_name),
+            "num_units": int(aggregate["num_units"]),
+            "num_unique_origins": int(aggregate["num_unique_origins"]),
+        },
+        "protocol": {
+            "quantity": "lead-specific free-rollout relative L2",
+            "aggregation": (
+                "origins within physical unit, then equal-weight mean across units"
+            ),
+            "same_rollout_supplies_all_horizons": True,
+            "in_horizon": f"1:{int(train_horizon)}",
+            "out_of_horizon": (
+                f"{int(train_horizon) + 1}:{int(eval_horizon)}"
+                if int(eval_horizon) > int(train_horizon)
+                else None
+            ),
+        },
     }
 
 
@@ -350,6 +408,11 @@ def main() -> None:
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--bootstrap-draws", type=int, default=10000)
     parser.add_argument("--progress-every", type=int, default=1)
+    parser.add_argument(
+        "--method-label",
+        default="",
+        help="reader-facing method name stored in the result JSON",
+    )
     cli = parser.parse_args()
     if min(cli.max_horizon, cli.origin_stride, cli.origin_batch) <= 0:
         parser.error("max-horizon, origin-stride, and origin-batch must be positive")
@@ -411,8 +474,6 @@ def main() -> None:
     if window <= 0:
         raise ValueError(f"invalid checkpoint window_size={window}")
     unit_origins: MutableMapping[str, MutableMapping[int, np.ndarray]] = defaultdict(dict)
-    duplicate_origins = 0
-    duplicate_max_abs = 0.0
     item_offset = 0
     start_time = time.time()
 
@@ -450,12 +511,6 @@ def main() -> None:
                         previous = unit_origins[key].get(absolute_origin)
                         if previous is None:
                             unit_origins[key][absolute_origin] = curve
-                        else:
-                            duplicate_origins += 1
-                            duplicate_max_abs = max(
-                                duplicate_max_abs,
-                                float(np.max(np.abs(previous - curve))),
-                            )
             item_offset += B
             if cli.progress_every > 0 and (
                 (batch_index + 1) % cli.progress_every == 0
@@ -470,38 +525,22 @@ def main() -> None:
                     flush=True,
                 )
 
-    result = summarize_unit_origins(
+    aggregate = summarize_unit_origins(
         unit_origins, K, train_horizon, cli.bootstrap_draws
     )
-    result.update({
-        "format_version": 2,
-        "checkpoint": str(cli.ckpt),
-        "checkpoint_epoch": epoch,
-        "dataset": str(args.dataset),
-        "model_name": str(args.model_name),
-        "split": str(cli.split),
-        "K": int(train_horizon),
-        "train_horizon": int(train_horizon),
-        "eval_horizon": int(K),
-        "window": window,
-        "origin_stride": int(cli.origin_stride),
-        "max_origins_per_item": int(cli.max_origins_per_item),
-        "origin_batch": int(cli.origin_batch),
-        "duplicate_origins_discarded": int(duplicate_origins),
-        "duplicate_origin_max_abs_diff": float(duplicate_max_abs),
-        "protocol": {
-            "quantity": "lead-specific free-rollout relative L2",
-            "aggregation": "origins within physical unit, then equal-weight mean across units",
-            "legacy_refresh_metric": False,
-            "same_rollout_supplies_all_horizons": True,
-            "in_horizon_definition": f"h=1:{train_horizon}",
-            "out_of_horizon_definition": (
-                f"h={train_horizon + 1}:{K}" if K > train_horizon else None
-            ),
-            "all_horizons_definition": f"h=1:{K}",
-            "long_half_definition": f"h={int(math.ceil(K / 2.0))}:{K}",
-        },
-    })
+    method_label = cli.method_label.strip() or "unspecified"
+    result = build_public_result(
+        aggregate,
+        checkpoint_path=str(cli.ckpt),
+        checkpoint_epoch=epoch,
+        dataset=str(args.dataset),
+        model_name=str(args.model_name),
+        method=method_label,
+        seed=int(getattr(args, "seed", -1)),
+        split=str(cli.split),
+        train_horizon=train_horizon,
+        eval_horizon=K,
+    )
     output = Path(cli.out)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")

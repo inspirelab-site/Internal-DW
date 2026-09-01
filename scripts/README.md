@@ -13,7 +13,7 @@ Reader-facing commands are organized by task rather than by server:
 | `utils/` | 2 | 2.38% | Installation and multi-GPU environment validation |
 | **Total** | **84** | **100%** | |
 
-`reproduce/` is a separate ten-script facade organized in paper order. Most
+`reproduce/` is a separate eleven-script facade organized in paper order. Most
 readers should start there and never call the lower-level files directly.
 
 A path- and definition-level audit separated the helpers used by the paper

@@ -59,6 +59,6 @@ python -u scripts/evaluate/evaluate_dense_multistart_rel_l2.py \
   --ckpt "${ckpt}" --out "${out}" --gpu 0 --split test \
   --max-horizon "${H}" --train-horizon "${K}" \
   --origin-stride 1 --max-origins-per-item 64 \
-  --origin-batch "${origin_batch}" --num-workers 0 --bootstrap-draws 10000
+  --origin-batch "${origin_batch}" --num-workers 0 --bootstrap-draws 10000 \
+  --method-label tbptt
 echo "[done] ${DATA} selected S=${S} seed${SEED}: ${out}"
-

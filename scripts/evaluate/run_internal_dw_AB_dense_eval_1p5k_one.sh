@@ -97,6 +97,11 @@ export CUDA_VISIBLE_DEVICES="${GPU}"
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 echo "[start] ${PHASE} ${DATA} ${ARM} seed${SEED} K=${K} eval_H=${EVAL_HORIZON} GPU=${GPU}"
 echo "[ckpt] ${CKPT}"
+case "${ARM}" in
+  exact) METHOD_LABEL=full_bptt ;;
+  dw) METHOD_LABEL=internal_dw ;;
+  *) METHOD_LABEL="${ARM}" ;;
+esac
 
 if [[ "${DATA}" == wb2 ]]; then
   mapfile -t horizons < <(seq 1 "${EVAL_HORIZON}")
@@ -105,6 +110,7 @@ if [[ "${DATA}" == wb2 ]]; then
     --horizons "${horizons[@]}" --train-horizon "${K}" \
     --batch-size "${WB2_BATCH:-2}" --start-stride "${ORIGIN_STRIDE}" \
     --num-starts "${WB2_NUM_STARTS:-${MAX_ORIGINS}}" --evenly-spaced-starts \
+    --method-label "${METHOD_LABEL}" \
     --out "${OUT}"
 else
   python -u scripts/evaluate/evaluate_dense_multistart_rel_l2.py \
@@ -112,7 +118,8 @@ else
     --max-horizon "${EVAL_HORIZON}" --train-horizon "${K}" \
     --origin-stride "${ORIGIN_STRIDE}" --max-origins-per-item "${MAX_ORIGINS}" \
     --origin-batch "${origin_batch}" --num-workers 0 \
-    --bootstrap-draws "${BOOTSTRAP_DRAWS}"
+    --bootstrap-draws "${BOOTSTRAP_DRAWS}" \
+    --method-label "${METHOD_LABEL}"
 fi
 rm -f "${NOT_EVALUABLE_MARKER}"
 printf 'checkpoint=%s\nsource_done=%s\ncompleted=%s\n' \

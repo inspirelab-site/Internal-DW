@@ -55,6 +55,11 @@ case "${DATA}:${ARM}" in
     exit 2
     ;;
 esac
+if [[ "${ARM}" == "exact" ]]; then
+  METHOD_LABEL=full_bptt
+else
+  METHOD_LABEL=internal_dw
+fi
 
 TRAIN_K=${K}
 EVAL_HORIZON=${EVAL_HORIZON:-$(( (TRAIN_K * EVAL_NUM + EVAL_DEN - 1) / EVAL_DEN ))}
@@ -95,6 +100,7 @@ if [[ "${DATA}" == "wb2" ]]; then
     --start-stride "${ORIGIN_STRIDE}" \
     --num-starts "${WB2_NUM_STARTS}" \
     --evenly-spaced-starts \
+    --method-label "${METHOD_LABEL}" \
     --out "${OUT}"
 else
   python -u scripts/evaluate/evaluate_dense_multistart_rel_l2.py \
@@ -108,6 +114,7 @@ else
     --max-origins-per-item "${MAX_ORIGINS}" \
     --origin-batch "${ORIGIN_BATCH}" \
     --num-workers "${NUM_WORKERS}" \
-    --bootstrap-draws "${BOOTSTRAP_DRAWS}"
+    --bootstrap-draws "${BOOTSTRAP_DRAWS}" \
+    --method-label "${METHOD_LABEL}"
 fi
 echo "[done] ${OUT}"

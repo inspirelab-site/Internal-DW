@@ -64,7 +64,8 @@ python -u scripts/evaluate/evaluate_dense_multistart_rel_l2.py \
   --ckpt "${CKPT}" --out "${OUT}" --gpu 0 --split test \
   --max-horizon "${H}" --train-horizon "${K}" \
   --origin-stride 1 --max-origins-per-item 64 \
-  --origin-batch "${ORIGIN_BATCH}" --num-workers 0 --bootstrap-draws 10000
+  --origin-batch "${ORIGIN_BATCH}" --num-workers 0 --bootstrap-draws 10000 \
+  --method-label static_gain
 
 python - "${OUT}" "${K}" "${H}" <<'PY'
 import json, sys
@@ -72,8 +73,8 @@ data = json.load(open(sys.argv[1]))
 k, h = map(int, sys.argv[2:])
 assert data["split"] == "test"
 assert data["train_horizon"] == k and data["eval_horizon"] == h
-assert data["protocol"]["all_horizons_definition"] == f"h=1:{h}"
+assert data["primary_metric"]["horizons"] == f"1:{h}"
 assert data["per_horizon"]["horizons"] == list(range(1, h + 1))
-print(f"[certified] ALL 1:{h}={data['summary']['all_horizons']['mean']:.6f}")
+print(f"[certified] ALL 1:{h}={data['primary_metric']['value']:.6f}")
 PY
 echo "[done] ${DATA} c=${GAIN} seed${SEED}: ${OUT}"

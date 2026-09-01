@@ -308,6 +308,11 @@ def main() -> None:
     parser.add_argument("--refresh-climatology", action="store_true")
     parser.add_argument("--build-climatology-only", action="store_true")
     parser.add_argument("--out", default=None)
+    parser.add_argument(
+        "--method-label",
+        default="",
+        help="reader-facing method name stored in the result JSON",
+    )
     cli = parser.parse_args()
 
     data_root = Path(cli.data)
@@ -564,6 +569,45 @@ def main() -> None:
         "relative_l2_horizons": horizons,
         "dense_horizons_1_to_K": bool(dense_prefix),
         "aggregation": "mean over rolling forecast origins at each lead, then mean over leads",
+    }
+
+    summary = result["summary"]
+    primary_value = summary["relative_l2_all_horizons_mean"]
+    if primary_value is None:
+        primary_value = summary["relative_l2_all_channels_horizon_mean"]
+    method_label = cli.method_label.strip() or "unspecified"
+    result = {
+        "format_version": 3,
+        "status": "complete",
+        "dataset": "weatherbench2",
+        "method": method_label,
+        "seed": int(getattr(args, "seed", -1)),
+        "split": str(cli.split),
+        "primary_metric": {
+            "name": "mean_relative_l2",
+            "value": float(primary_value),
+            "horizons": f"1:{max_horizon}" if dense_prefix else str(horizons),
+            "lower_is_better": True,
+        },
+        "checkpoint": {
+            "path": str(cli.ckpt),
+            "epoch": int(saved_epoch),
+        },
+        "train_horizon": int(train_horizon),
+        "eval_horizon": int(max_horizon),
+        "summary": summary,
+        "per_horizon": result["per_horizon"],
+        "evaluation": {
+            "model": str(getattr(args, "model_name", "unet_field")),
+            "num_starts": int(starts.size),
+            "channels": channel_names,
+            "step_hours": float(step_hours),
+        },
+        "protocol": {
+            "climatology": "train-only calendar-day x UTC-hour pixel mean",
+            "area_weights": "cos(latitude), normalized over the global grid",
+            "primary_acc": "pooled anomaly cross-product over starts and space",
+        },
     }
 
     out = Path(cli.out) if cli.out else Path(cli.ckpt).parent / "weatherbench2_acc.json"
