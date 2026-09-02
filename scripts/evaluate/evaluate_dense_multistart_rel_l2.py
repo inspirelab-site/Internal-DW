@@ -375,6 +375,30 @@ def build_public_result(
     }
 
 
+def format_public_summary(
+    result: Mapping[str, Any], train_horizon: int, eval_horizon: int
+) -> str:
+    """Format the compact schema without reaching back to removed top-level keys."""
+
+    summary = result["summary"]
+    evaluation = result["evaluation"]
+    out_summary = summary["out_of_horizon"]
+    out_text = (
+        f"OOD {int(train_horizon) + 1}:{int(eval_horizon)}="
+        f"{out_summary['mean']:.6f}; "
+        if out_summary is not None
+        else "OOD=n/a; "
+    )
+    return (
+        f"IN 1:{int(train_horizon)}={summary['in_horizon']['mean']:.6f}; "
+        f"{out_text}"
+        f"ALL 1:{int(eval_horizon)}={summary['all_horizons']['mean']:.6f}; "
+        f"H{int(eval_horizon)}={summary['final_horizon']['mean']:.6f}; "
+        f"units={evaluation['num_units']}; "
+        f"origins={evaluation['num_unique_origins']}"
+    )
+
+
 def _prepare_args(checkpoint: Mapping[str, Any], cli) -> argparse.Namespace:
     if "args" not in checkpoint:
         raise KeyError(f"checkpoint has no saved args: {cli.ckpt}")
@@ -545,19 +569,7 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     print("\n=== dense multi-origin relative L2 ===")
-    out_summary = result["summary"]["out_of_horizon"]
-    out_text = (
-        f"OOD {train_horizon + 1}:{K}={out_summary['mean']:.6f}; "
-        if out_summary is not None
-        else "OOD=n/a; "
-    )
-    print(
-        f"IN 1:{train_horizon}={result['summary']['in_horizon']['mean']:.6f}; "
-        f"{out_text}"
-        f"ALL 1:{K}={result['summary']['all_horizons']['mean']:.6f}; "
-        f"H{K}={result['summary']['final_horizon']['mean']:.6f}; "
-        f"units={result['num_units']}; origins={result['num_unique_origins']}"
-    )
+    print(format_public_summary(result, train_horizon, K))
     print(f"[out] {output}")
 
 

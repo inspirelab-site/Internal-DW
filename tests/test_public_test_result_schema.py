@@ -4,6 +4,7 @@ import numpy as np
 
 from scripts.evaluate.evaluate_dense_multistart_rel_l2 import (
     build_public_result,
+    format_public_summary,
     summarize_unit_origins,
 )
 
@@ -46,6 +47,14 @@ def test_public_result_puts_primary_information_first_and_omits_diagnostics():
     ]
     assert result["primary_metric"]["value"] == result["summary"]["all_horizons"]["mean"]
     assert result["checkpoint"] == {"path": "outputs/example/best.pth", "epoch": 7}
+    assert result["evaluation"] == {
+        "model": "official_mamba_state",
+        "num_units": 2,
+        "num_unique_origins": 4,
+    }
+    text = format_public_summary(result, train_horizon=2, eval_horizon=3)
+    assert "units=2; origins=4" in text
+    assert "ALL 1:3=" in text
     assert "per_unit" not in result
     assert "duplicate_origins_discarded" not in result
     json.dumps(result, allow_nan=False)
