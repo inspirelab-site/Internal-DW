@@ -15,6 +15,18 @@ Run the public API smoke test first:
 bash scripts/reproduce/00_smoke_test.sh
 ```
 
+The known-SNR mechanism closure is self-contained and precedes the benchmark
+workflow. It generates its synthetic archive and analytic reference, trains
+the matched seed-0 forecasting arms, runs all frozen-checkpoint probes, and
+renders Figure 4:
+
+```bash
+GPU=0 GPUS=0,1,2,3 bash scripts/reproduce/train_test_known_snr.sh
+```
+
+Omit `GPUS` to execute the same resumable stages on one GPU; the launcher
+adjusts accumulation to retain effective batch 32.
+
 The reader-facing MG workflow keeps training and testing explicit while using
 the same output contract as the benchmark evaluators:
 
@@ -31,6 +43,20 @@ gradient-accumulation schedule.
 The `train` phase writes `best.pth`; the `test` phase reads that checkpoint and
 writes one compact test JSON. Omitting the phase runs both in order. Plotting
 entry points consume JSON files only.
+
+To train and test every Figure 6 dataset, reported arm, and matched seed
+sequentially on one GPU, run:
+
+```bash
+GPU=0 bash scripts/reproduce/train_test_figure6_all.sh
+```
+
+The four favorable datasets run first. The queue skips completed test JSONs,
+resumes interrupted checkpoints, and renders Figure 6 after all runs finish.
+Failures are isolated by dataset, so a bad download is recorded while later
+datasets continue; the final process status is nonzero until every requested
+dataset succeeds. Licensed datasets must already be present in the layouts
+documented in `docs/DATA_FORMATS.md`.
 
 Then reproduce paper items in order:
 

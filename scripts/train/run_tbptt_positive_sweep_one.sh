@@ -14,9 +14,9 @@ GPU=${GPU:-}
 GPUS=${GPUS:-${GPU}}
 [[ -n "${GPUS}" ]] || { echo "[refuse] set GPUS=0,1,2,3 (DDP) or GPU=0" >&2; exit 2; }
 gpu_text=${GPUS//,/ }
-read -r -a GPU_IDS <<< "${gpu_text}"
-WORLD_SIZE=${#GPU_IDS[@]}
-case "${WORLD_SIZE}" in
+read -r -a TBPTT_GPU_IDS <<< "${gpu_text}"
+TBPTT_WORLD_SIZE=${#TBPTT_GPU_IDS[@]}
+case "${TBPTT_WORLD_SIZE}" in
   1|2|4) ;;
   *) echo "[refuse] supported world sizes are 1, 2, and 4; got GPUS=${GPUS}" >&2; exit 2 ;;
 esac
@@ -27,22 +27,22 @@ SWEEP_ROOT=${SWEEP_ROOT:-experiments/tbptt_positive_sweep_v1}
 #   MG/ETT: global effective batch 32; Shear: global effective batch 4.
 configure_batch() {
   local target=$1 preferred_local=$2
-  if (( target % (WORLD_SIZE * preferred_local) == 0 )); then
+  if (( target % (TBPTT_WORLD_SIZE * preferred_local) == 0 )); then
     LOCAL_BATCH=${LOCAL_BATCH_OVERRIDE:-${preferred_local}}
   else
-    LOCAL_BATCH=${LOCAL_BATCH_OVERRIDE:-$(( target / WORLD_SIZE ))}
+    LOCAL_BATCH=${LOCAL_BATCH_OVERRIDE:-$(( target / TBPTT_WORLD_SIZE ))}
   fi
-  local denom=$(( WORLD_SIZE * LOCAL_BATCH ))
+  local denom=$(( TBPTT_WORLD_SIZE * LOCAL_BATCH ))
   (( denom > 0 && target % denom == 0 )) || {
-    echo "[refuse] cannot preserve effective batch ${target}: world=${WORLD_SIZE}, local_batch=${LOCAL_BATCH}" >&2
+    echo "[refuse] cannot preserve effective batch ${target}: world=${TBPTT_WORLD_SIZE}, local_batch=${LOCAL_BATCH}" >&2
     exit 2
   }
   ACCUM=${GRAD_ACCUM_OVERRIDE:-$(( target / denom ))}
-  (( WORLD_SIZE * LOCAL_BATCH * ACCUM == target )) || {
-    echo "[refuse] effective batch mismatch: world*local*accum=$((WORLD_SIZE * LOCAL_BATCH * ACCUM)), expected ${target}" >&2
+  (( TBPTT_WORLD_SIZE * LOCAL_BATCH * ACCUM == target )) || {
+    echo "[refuse] effective batch mismatch: world*local*accum=$((TBPTT_WORLD_SIZE * LOCAL_BATCH * ACCUM)), expected ${target}" >&2
     exit 2
   }
-  echo "[batch] world=${WORLD_SIZE} local=${LOCAL_BATCH} accum=${ACCUM} effective=${target}"
+  echo "[batch] world=${TBPTT_WORLD_SIZE} local=${LOCAL_BATCH} accum=${ACCUM} effective=${target}"
 }
 
 case "${DATA}" in
@@ -52,15 +52,14 @@ case "${DATA}" in
     [[ "${S}" == 8 || "${S}" == 16 ]] || {
       echo "[refuse] MG candidates are S=8,16" >&2; exit 2;
     }
-    # Reuse the completed S=8 tree exactly; do not copy or retrain it.
+    # Reuse the historical S=8 tree when present. A fresh public checkout
+    # trains the same selected segment under SWEEP_ROOT instead.
     if [[ "${S}" == 8 ]]; then
       out="experiments/tbptt_mg_a8/mackey_glass/tau30_K32/ckpt/seed${SEED}"
       if [[ -s "${out}/best.pth" ]]; then
         echo "[reuse] MG S=8 seed${SEED}: ${out}/best.pth"
         exit 0
       fi
-      echo "[missing] expected completed MG S=8 checkpoint: ${out}/best.pth" >&2
-      exit 3
     fi
     DATASET=mackey_glass COND=tau30 K="${K}" METHOD="tbptt${S}" \
       SEED="${SEED}" GPUS="${GPUS}" HIDDEN=128 \
@@ -73,7 +72,7 @@ case "${DATA}" in
 
   ettm1|ettm2)
     K=64
-    configure_batch 32 $((32 / WORLD_SIZE))
+    configure_batch 32 $((32 / TBPTT_WORLD_SIZE))
     [[ "${S}" == 16 || "${S}" == 32 ]] || {
       echo "[refuse] ETTm candidates are S=16,32" >&2; exit 2;
     }
@@ -98,15 +97,14 @@ case "${DATA}" in
     [[ "${S}" == 8 || "${S}" == 16 ]] || {
       echo "[refuse] shear candidates are S=8,16" >&2; exit 2;
     }
-    # Reuse the completed S=8 tree exactly.
+    # Reuse the historical S=8 tree when present; otherwise train it in the
+    # public sweep tree using the same TBPTT implementation.
     if [[ "${S}" == 8 ]]; then
       out="experiments/thewell_shear_final_lr3e4/shear_flow/unet_b32_D4_W2_K32_ds4/tbptt8/seed${SEED}"
       if [[ -s "${out}/best.pth" ]]; then
         echo "[reuse] shear S=8 seed${SEED}: ${out}/best.pth"
         exit 0
       fi
-      echo "[missing] expected completed shear S=8 checkpoint: ${out}/best.pth" >&2
-      exit 3
     fi
     DATASET=shear_flow METHOD="tbptt${S}" SEED="${SEED}" K="${K}" \
       GPUS="${GPUS}" BATCH="${LOCAL_BATCH}" GRAD_ACCUM="${ACCUM}" EPOCHS=100 \

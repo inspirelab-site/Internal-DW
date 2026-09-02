@@ -2,6 +2,8 @@
 # Matched seed-0 forecasting controls for the known-SNR diagonal-AR closure.
 # Trains only the missing Clip, TBPTT-8, and Forward-JReg arms.  Exact-BPTT
 # and diagonal-AR Internal-DW are reused by the summarizer.
+# The historical filename is retained for compatibility; the launcher now
+# preserves effective batch 32 on one, two, or four GPUs.
 set -euo pipefail
 trap '' HUP
 
@@ -15,19 +17,21 @@ FIRST_GPU=${GPUS%%,*}
 BATCH=${BATCH:-4}
 TARGET_EFFECTIVE_BATCH=32
 IFS=',' read -r -a GPU_IDS <<< "${GPUS}"
-WORLD_SIZE=${#GPU_IDS[@]}
-if (( WORLD_SIZE != 4 )); then
-  echo "This launcher is the strict DDP-4 protocol; GPUS must contain four ids." >&2
+KNOWN_SNR_CONTROL_WORLD_SIZE=${#GPU_IDS[@]}
+if (( KNOWN_SNR_CONTROL_WORLD_SIZE != 1 \
+   && KNOWN_SNR_CONTROL_WORLD_SIZE != 2 \
+   && KNOWN_SNR_CONTROL_WORLD_SIZE != 4 )); then
+  echo "GPUS must contain one, two, or four ids." >&2
   exit 2
 fi
-denominator=$(( BATCH * WORLD_SIZE ))
+denominator=$(( BATCH * KNOWN_SNR_CONTROL_WORLD_SIZE ))
 if (( TARGET_EFFECTIVE_BATCH % denominator != 0 )); then
-  echo "BATCH=${BATCH} x world=${WORLD_SIZE} does not divide 32" >&2
+  echo "BATCH=${BATCH} x world=${KNOWN_SNR_CONTROL_WORLD_SIZE} does not divide 32" >&2
   exit 2
 fi
 GRAD_ACCUM=${GRAD_ACCUM:-$(( TARGET_EFFECTIVE_BATCH / denominator ))}
-if (( BATCH * WORLD_SIZE * GRAD_ACCUM != TARGET_EFFECTIVE_BATCH )); then
-  echo "effective batch must be 32, got $((BATCH * WORLD_SIZE * GRAD_ACCUM))" >&2
+if (( BATCH * KNOWN_SNR_CONTROL_WORLD_SIZE * GRAD_ACCUM != TARGET_EFFECTIVE_BATCH )); then
+  echo "effective batch must be 32, got $((BATCH * KNOWN_SNR_CONTROL_WORLD_SIZE * GRAD_ACCUM))" >&2
   exit 2
 fi
 
@@ -43,11 +47,14 @@ mkdir -p "${SAVE_ROOT}" "${LOG_ROOT}" "${OUT_ROOT}"
 [[ -s "${EXACT_RUN}/eval_results.json" ]] || { echo "missing Exact result" >&2; exit 2; }
 [[ -s "${DW_RUN}/eval_results.json" ]] || { echo "missing diagonal-AR DW result" >&2; exit 2; }
 
-cat > "${OUT_ROOT}/forecasting_controls_protocol.json" <<EOF
+PROTOCOL_FILE="${OUT_ROOT}/forecasting_controls_protocol.json"
+if [[ ! -s "${PROTOCOL_FILE}" ]]; then
+cat > "${PROTOCOL_FILE}" <<EOF
 {
   "seed": 0,
   "K": 32,
-  "world_size": 4,
+  "world_size": ${KNOWN_SNR_CONTROL_WORLD_SIZE},
+  "diagonal_ar_dw_world_size": ${KNOWN_SNR_CONTROL_WORLD_SIZE},
   "local_batch_size": ${BATCH},
   "grad_accum_steps": ${GRAD_ACCUM},
   "effective_batch_size": 32,
@@ -67,12 +74,13 @@ cat > "${OUT_ROOT}/forecasting_controls_protocol.json" <<EOF
   }
 }
 EOF
+fi
 
 run_arm() {
   local arm="$1" method="$2" grad_clip="$3" extra_args="$4" port="$5"
   local save_base="${SAVE_ROOT}/${arm}"
   local log="${LOG_ROOT}/${arm}_seed${SEED}.log"
-  echo "[launch] ${arm}: DDP4 GPUs=${GPUS}, effective batch=${BATCH}x4x${GRAD_ACCUM}=32"
+  echo "[launch] ${arm}: GPUs=${GPUS}, effective batch=${BATCH}x${KNOWN_SNR_CONTROL_WORLD_SIZE}x${GRAD_ACCUM}=32"
   env -u DUAL_WIENER_CONST -u DUAL_WIENER_INNOVATION_FILE \
     -u DUAL_WIENER_INNOVATION_KEY -u DUAL_WIENER_DOMAIN_NOISE_MODEL \
     -u GLOBAL_WIENER_BATCH_CONDITIONED -u GLOBAL_WIENER_SUPERBATCH_GROUPS \
@@ -89,7 +97,7 @@ run_arm() {
     bash scripts/train/run_mem_one.sh 2>&1 | tee -a "${log}"
 }
 
-# ARMS allows different four-GPU servers to claim disjoint controls.  Run
+# ARMS allows different servers to claim disjoint controls.  Run
 # directories are arm-specific, so the jobs never overwrite one another.
 for arm in ${ARMS}; do
   case "${arm}" in
@@ -123,7 +131,7 @@ if [[ -s "${CLIP_RUN}/eval_results.json" \
     --clip-run "${CLIP_RUN}" \
     --tbptt-run "${TBPTT_RUN}" \
     --jreg-run "${JREG_RUN}" \
-    --protocol "${OUT_ROOT}/forecasting_controls_protocol.json" \
+    --protocol "${PROTOCOL_FILE}" \
     --output "${OUT_ROOT}/forecasting_controls.json"
   python scripts/results/build_known_snr_results.py closure \
     --root "${OUT_ROOT}" --quiet

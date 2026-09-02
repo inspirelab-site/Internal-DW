@@ -325,7 +325,7 @@ def build_controls(args: argparse.Namespace) -> None:
         "exact_bptt": int(exact["local_batch_size"]) * int(exact["grad_accum_steps"]),
         "diagonal_ar_dw": int(arguments["diagonal_ar_dw"]["local_batch_size"])
         * int(arguments["diagonal_ar_dw"]["grad_accum_steps"])
-        * 4,
+        * int(protocol.get("diagonal_ar_dw_world_size", 4)),
     }
     for name in ("clip_0p1", "jreg", "tbptt8"):
         effective[name] = (

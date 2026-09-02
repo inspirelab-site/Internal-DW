@@ -13,3 +13,8 @@ Internal-DW setting maps from `1 x 4 x 8` to `4 x 1 x 8`.
 Readers may override `BATCH`, `GRAD_ACCUM`, and the other documented variables
 at launch time. Such overrides are useful for hardware constraints but are no
 longer the exact paper training schedule.
+
+`known_snr.sh` records the single-seed closure settings, including the
+canonical four-GPU routed arms, used by
+`scripts/reproduce/train_test_known_snr.sh`. `figure6.sh` records the eight
+benchmark horizons, one-GPU batch geometry, and validation-selected controls.

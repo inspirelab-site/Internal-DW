@@ -8,18 +8,18 @@ GPUS=${GPUS:-${GPU:-0}}
 FIRST_GPU=${GPUS%%,*}
 BATCH=${BATCH:-4}
 IFS=',' read -r -a CLOSURE_GPU_IDS <<< "${GPUS}"
-WORLD_SIZE=${#CLOSURE_GPU_IDS[@]}
+KNOWN_SNR_FORECAST_WORLD_SIZE=${#CLOSURE_GPU_IDS[@]}
 TARGET_EFFECTIVE_BATCH=32
 if [[ -z "${GRAD_ACCUM:-}" ]]; then
-  denominator=$(( BATCH * WORLD_SIZE ))
+  denominator=$(( BATCH * KNOWN_SNR_FORECAST_WORLD_SIZE ))
   if (( TARGET_EFFECTIVE_BATCH % denominator != 0 )); then
-    echo "BATCH=${BATCH} x world=${WORLD_SIZE} does not divide target effective batch 32" >&2
+    echo "BATCH=${BATCH} x world=${KNOWN_SNR_FORECAST_WORLD_SIZE} does not divide target effective batch 32" >&2
     exit 2
   fi
   GRAD_ACCUM=$(( TARGET_EFFECTIVE_BATCH / denominator ))
 fi
-if (( BATCH * WORLD_SIZE * GRAD_ACCUM != TARGET_EFFECTIVE_BATCH )); then
-  echo "effective batch mismatch: BATCH=${BATCH} world=${WORLD_SIZE} accum=${GRAD_ACCUM}, expected 32" >&2
+if (( BATCH * KNOWN_SNR_FORECAST_WORLD_SIZE * GRAD_ACCUM != TARGET_EFFECTIVE_BATCH )); then
+  echo "effective batch mismatch: BATCH=${BATCH} world=${KNOWN_SNR_FORECAST_WORLD_SIZE} accum=${GRAD_ACCUM}, expected 32" >&2
   exit 2
 fi
 DATA=${DATA:-data/synthetic/known_snr_ar_D8_T1024_traj96_a5fd79afa1e5f_s0.npz}
@@ -57,7 +57,7 @@ PY
 )
 
 echo "[closure] training/resuming diagonal-AR(1) Internal-DW on GPUs ${GPUS}"
-echo "[closure] effective batch=${BATCH} x ${WORLD_SIZE} x ${GRAD_ACCUM} = ${TARGET_EFFECTIVE_BATCH}"
+echo "[closure] effective batch=${BATCH} x ${KNOWN_SNR_FORECAST_WORLD_SIZE} x ${GRAD_ACCUM} = ${TARGET_EFFECTIVE_BATCH}"
 env \
   GPU="${FIRST_GPU}" \
   GPUS="${GPUS}" \
@@ -93,5 +93,5 @@ python scripts/results/build_known_snr_results.py forecasting \
   --dw-run "${DW_RUN}" \
   --artifact "${ARTIFACT}" \
   --output "${FORECAST_OUT}" \
-  --dw-world-size "${WORLD_SIZE}" \
+  --dw-world-size "${KNOWN_SNR_FORECAST_WORLD_SIZE}" \
   --horizons 1 2 4 8 16 32

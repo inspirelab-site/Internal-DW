@@ -130,7 +130,8 @@ case "${DATA}" in
     if [[ "${ARM}" == dw ]]; then method=dualwiener_spectral; tag=dualwiener_spectral; fi
     out="${ROOT}/${PHASE}/${ARM}/weatherbench2/unet_c32_D4_W2_K${K}/${tag}/seed${SEED}"
     env METHOD="${method}" SEED="${SEED}" K="${K}" GPUS="${GPUS}" \
-      BATCH=1 GRAD_ACCUM=2 EPOCHS=100 EARLY_STOP_PATIENCE=20 LR=1e-4 \
+      BATCH="${WB2_TRAIN_BATCH:-1}" GRAD_ACCUM="${WB2_TRAIN_GRAD_ACCUM:-2}" \
+      EPOCHS=100 EARLY_STOP_PATIENCE=20 LR=1e-4 \
       GRAD_CLIP="${GRAD_CLIP}" EXTRA_ARGS="${EXTRA_ARGS}" \
       SAVE_ROOT="${out}" SKIP_EXISTING=1 RESUME=auto \
       bash scripts/train/run_wb2_arm.sh
@@ -173,8 +174,10 @@ case "${DATA}" in
         HCP_DOMAIN_TAG=SubjectCrossfit
       )
     fi
-    batch=2; accum=4
-    if [[ "${K}" -ge 128 ]]; then batch=1; accum=8; fi
+    batch=${FMRI_BATCH:-2}; accum=${FMRI_GRAD_ACCUM:-4}
+    if [[ "${K}" -ge 128 && -z "${FMRI_BATCH:-}" && -z "${FMRI_GRAD_ACCUM:-}" ]]; then
+      batch=1; accum=8
+    fi
     for assignment in "${domain_args[@]}"; do
       export "${assignment}"
     done

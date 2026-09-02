@@ -55,7 +55,7 @@ fi
 CKPT=${matches[0]}
 RUN_DIR=$(dirname "${CKPT}")
 EVAL_HORIZON=$(( (3 * K + 1) / 2 ))
-OUT="${OUT_ROOT}/${PHASE}/${DATA}/${ARM}_K${K}_seed${SEED}.json"
+OUT=${OUT:-"${OUT_ROOT}/${PHASE}/${DATA}/${ARM}_K${K}_seed${SEED}.json"}
 COMPLETE_MARKER="${OUT}.source_complete"
 NOT_EVALUABLE_MARKER="${OUT}.not_evaluable"
 mkdir -p "$(dirname "${OUT}")"

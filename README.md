@@ -35,6 +35,36 @@ The reusable operator itself depends only on NumPy and PyTorch. The `paper`
 extra installs the scientific-data, plotting, and tabular dependencies used by
 the released experiments.
 
+## Reproduce the known-SNR closure
+
+The known-SNR experiment is the self-contained mechanism check and should be
+run before the real-data benchmarks. It generates the stationary diagonal
+AR(1) data, trains the seed-0 Full-BPTT checkpoint, constructs the analytic
+oracle used only by the labeled oracle comparisons, fits the assigned
+diagonal-AR estimator from the training split, and completes all five panels:
+
+```bash
+GPU=0 GPUS=0,1,2,3 bash scripts/reproduce/train_test_known_snr.sh
+```
+
+`GPU` selects the single device used by Full BPTT and the frozen probes;
+`GPUS` selects the devices used by the Internal-DW and forecasting-control
+training. The command above is the recorded four-GPU routing protocol. A
+one-GPU machine can run the same resumable workflow with `GPU=0` alone while
+preserving optimizer effective batch 32.
+
+The command is resumable and needs no downloaded dataset. Its main outputs are:
+
+```text
+probe_outputs/known_snr_diagonal_ar_closure/seed0/closure_summary.json
+figs/known_snr_closure.pdf
+```
+
+The gain-identification, route-risk, and forecasting stages all use the same
+preassigned diagonal-AR estimator. The true process parameters are not exposed
+to that estimator; they are retained separately for the analytic reference
+curves and oracle arm.
+
 ## Train and test a model
 
 The MG example is the shortest complete training-to-test workflow. Run the two
@@ -95,6 +125,38 @@ files have been generated, render one paper item or all available items with:
 bash scripts/reproduce/05_figure_6.sh
 bash scripts/reproduce/render_all.sh
 ```
+
+### One-command Figure 6 reproduction
+
+After preparing the eight datasets described below, the entire Figure 6
+benchmark can be trained and tested sequentially on one GPU:
+
+```bash
+GPU=0 bash scripts/reproduce/train_test_figure6_all.sh
+```
+
+The queue runs the four favorable cases first (MG, ETTm1, ETTm2, and shear
+flow), followed by NARMA-5, iEEG, movie fMRI, and WeatherBench-2. Within each
+dataset it completes every reported arm and seeds 0, 1, and 2 before moving to
+the next dataset. Static gain and TBPTT use the validation-selected values
+recorded in `configs/reproduce/figure6.sh`. The queue is resumable: nonempty
+test JSON files are skipped and interrupted checkpoints resume automatically.
+Failure is isolated by dataset: a missing or malformed input is recorded and
+the queue continues with every later dataset. After all datasets have been
+attempted, the command returns a nonzero status and writes
+`probe_outputs/figure6_reproduction_failures.txt` if anything failed. Fixing
+the listed inputs and rerunning the same command resumes only missing work.
+When all inputs are complete, the queue also renders Figure 6.
+
+For a short queue check restricted to MG, use:
+
+```bash
+GPU=0 SEEDS=0 REPRO_DATASETS=mg RENDER_FIGURE6=0 \
+  bash scripts/reproduce/train_test_figure6_all.sh
+```
+
+Licensed datasets are not downloaded automatically. A missing prepared input
+fails only its own dataset rather than discarding the rest of the queue.
 
 ## Add Internal-DW to a model
 
