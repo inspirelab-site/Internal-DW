@@ -23,6 +23,11 @@ ARM=full_bptt SEED=0 GPU=0 bash scripts/reproduce/train_test_mg.sh train
 ARM=full_bptt SEED=0 GPU=0 bash scripts/reproduce/train_test_mg.sh test
 ```
 
+The launcher reads the arm-specific canonical settings from
+`configs/reproduce/`. It also accepts `GPUS=0,1,2,3` and automatically divides
+the recorded global microbatch over DDP ranks without changing the recorded
+gradient-accumulation schedule.
+
 The `train` phase writes `best.pth`; the `test` phase reads that checkpoint and
 writes one compact test JSON. Omitting the phase runs both in order. Plotting
 entry points consume JSON files only.

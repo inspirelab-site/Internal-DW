@@ -48,6 +48,13 @@ ARM=internal_dw SEED=0 GPU=0 \
   bash scripts/reproduce/train_test_mg.sh
 ```
 
+The canonical paper settings are stored in `configs/reproduce/`. The launcher
+loads the corresponding Full-BPTT or Internal-DW configuration and prints the
+resolved world size, local batch, accumulation count, and effective batch
+before training. With four GPUs, use `GPUS=0,1,2,3` instead of `GPU=0`; the
+launcher preserves the recorded global microbatch and accumulation schedule.
+Explicit `BATCH` or `GRAD_ACCUM` values override the paper defaults.
+
 Each command first trains with validation-based checkpoint selection and then
 evaluates the selected checkpoint once on the test split. Training and testing
 can also be invoked independently:
