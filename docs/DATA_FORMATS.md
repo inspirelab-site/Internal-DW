@@ -89,6 +89,14 @@ parameters and prevents incompatible runs from silently sharing data.
 
 ## ETTm1 and ETTm2
 
+The raw CSV files are not bundled with this repository. Obtain them from the
+upstream [`zhouhaoyi/ETDataset`](https://github.com/zhouhaoyi/ETDataset)
+repository, for example:
+
+```bash
+git clone --depth 1 https://github.com/zhouhaoyi/ETDataset.git external/ETDataset
+```
+
 The preparation script accepts either of these upstream layouts:
 
 ```text
@@ -109,7 +117,7 @@ columns. Prepare the standard chronological splits with:
 ```bash
 python scripts/data/prepare_temporal_candidate_screen_data.py \
   --only ett \
-  --ett-root /path/to/ETDataset \
+  --ett-root external/ETDataset \
   --output-root probe_inputs/temporal_candidate_regime_v1
 ```
 
@@ -198,6 +206,22 @@ paper runner uses `ROI=400`. The loader also supports the legacy
 `z`.
 
 ## The Well shear flow
+
+The shear-flow HDF5 files are not bundled with this repository. Clone the
+upstream [`PolymathicAI/the_well`](https://github.com/PolymathicAI/the_well)
+registry and download all three splits with the resumable helper:
+
+```bash
+git clone --depth 1 https://github.com/PolymathicAI/the_well.git external/the_well
+for split in train valid test; do
+  python scripts/data/download_thewell_registry.py \
+    --registry external/the_well/the_well/utils/registry.yaml \
+    --base-path external/the_well/gradient_pilots \
+    --dataset shear_flow \
+    --split "${split}" \
+    --parallel
+done
+```
 
 The public runner requires all three upstream splits:
 
