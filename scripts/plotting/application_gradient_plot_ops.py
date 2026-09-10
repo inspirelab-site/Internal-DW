@@ -21,6 +21,7 @@ within-dataset trends rather than utility magnitudes across datasets.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,7 +94,8 @@ DATASETS = (
     DatasetSpec(
         "ieeg",
         "iEEG",
-        ROOT / "probe_outputs" / "real_heldout_gradient_utility_v1" / "ieeg_seed0.json",
+        Path(os.environ.get('IEEG_PROBE_ROOT', ROOT / 'probe_outputs/ieeg_cohort_v1')) / 'utility/cohort.json',
+        schema="cohort",
     ),
     DatasetSpec(
         "fmri",
@@ -138,6 +140,17 @@ def load_curves(spec: DatasetSpec) -> Curves:
         raise FileNotFoundError(f"missing probe output: {spec.path}")
     payload = json.loads(spec.path.read_text(encoding="utf-8"))
     horizon = np.asarray(payload["horizons"], dtype=int)
+    if spec.schema == "cohort":
+        if len(payload.get('subjects', [])) != 16:
+            raise ValueError('iEEG utility requires the complete cohort')
+        summary = payload['summary']
+        amplitude = 'full_amplitude_H1'; utility = 'full_window_utility'
+        median = _array(summary, utility, 'median')
+        return Curves(horizon=horizon, amplitude_median=_array(summary, amplitude, 'median'),
+                      amplitude_q10=_array(summary, amplitude, 'q10'), amplitude_q90=_array(summary, amplitude, 'q90'),
+                      utility_median=median, utility_q25=_array(summary, utility, 'q25'),
+                      utility_q75=_array(summary, utility, 'q75'), pairs=16,
+                      negative_fraction=float(np.mean(median < 0)))
     if spec.schema == "standard":
         summary = payload["summary"]
         amplitude_metric = "full_amplitude_H1"

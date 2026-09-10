@@ -9,11 +9,12 @@ if [[ "${MODE}" == run ]]; then
   GPUS=${GPUS:-0,1,2,3} bash scripts/probes/run_cross_dataset_drive_history_map_4gpu.sh
   GPUS=${GPUS:-0,1,2,3} bash scripts/probes/run_driven_mg_strength_sweep.sh
 else
-  for name in mg narma ieeg shear wb2 fmri; do require_file "${MAP_ROOT}/${name}.json"; done
+  for name in mg narma shear wb2 fmri; do require_file "${MAP_ROOT}/${name}.json"; done
+  require_file "${IEEG_PROBE_ROOT:-probe_outputs/ieeg_cohort_v1}/regime/cohort.json"
   "${PYTHON}" scripts/plotting/plot_cross_dataset_drive_history_map.py \
     --dataset "MG=${MAP_ROOT}/mg.json" \
     --dataset "NARMA=${MAP_ROOT}/narma.json" \
-    --dataset "iEEG=${MAP_ROOT}/ieeg.json" \
+    --dataset "iEEG=${IEEG_PROBE_ROOT:-probe_outputs/ieeg_cohort_v1}/regime/cohort.json" \
     --dataset "Shear=${MAP_ROOT}/shear.json" \
     --dataset "WB2=${MAP_ROOT}/wb2.json" \
     --dataset "ETTm1=probe_outputs/temporal_candidate_regime_v1/ettm1.json" \
@@ -31,4 +32,3 @@ else
 fi
 
 echo "[done] Figure 3 ledgers under ${MAP_ROOT} and ${MG_ROOT}"
-

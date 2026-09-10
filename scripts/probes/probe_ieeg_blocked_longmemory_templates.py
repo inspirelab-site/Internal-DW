@@ -37,6 +37,7 @@ from internal_dw.datasets.ieeg import build_ieeg_splits  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", default="data/synthetic")
+    parser.add_argument("--prepared-npz", type=Path, help="Normalized subject archive; use only train_state for templates")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--subject", default="P41CS")
@@ -70,6 +71,13 @@ def _parse_positive_ints(text: str) -> List[int]:
 
 
 def _load_training_series(a: argparse.Namespace) -> np.ndarray:
+    if getattr(a, "prepared_npz", None) is not None:
+        with np.load(a.prepared_npz, allow_pickle=False) as archive:
+            train = archive["train_state"]
+        if train.ndim != 3 or not np.isfinite(train).all():
+            raise ValueError("Expected finite [chunks, time, channels] training state")
+        # Match the original FIF-v3 subject template adapter; no re-normalization.
+        return np.ascontiguousarray(train.reshape(-1, train.shape[-1]), dtype=np.float32)
     split_args = SimpleNamespace(
         data_path=str(a.data_path),
         seed=int(a.seed),

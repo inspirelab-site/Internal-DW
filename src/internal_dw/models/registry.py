@@ -101,6 +101,7 @@ def build_model(args, rank: int = 0):
             **routing,
             **_dual_wiener_kwargs(args),
         )
+        model.compact_recurrent_logging = bool(getattr(args, "compact_recurrent_logging", False))
         return model.cuda(rank)
 
     if int(getattr(args, "field_channels", 0)) <= 0:

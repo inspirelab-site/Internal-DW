@@ -126,6 +126,79 @@ bash scripts/reproduce/05_figure_6.sh
 bash scripts/reproduce/render_all.sh
 ```
 
+### Movie iEEG: prepare, train, and test
+
+The iEEG benchmark uses **16 participants with subject-specific models and visual stimulus**, not
+the earlier single-subject/no-stimulus experiment. Prepare only iEEG with:
+
+```bash
+FIF_ROOT=/path/to/preprocessed_length_matched \
+CLIP_ROOT=/path/to/clip_features \
+  bash scripts/reproduce/train_test_ieeg.sh prepare
+```
+
+This command reads the existing preprocessed theta FIF files and aligned 25-fps
+CLIP features; it does not download data or prepare any other dataset. See
+[`docs/DATA_FORMATS.md#movie-ieeg`](docs/DATA_FORMATS.md#movie-ieeg) for the required
+files and preprocessing contract. Append `--subject sub-CS41` to prepare just
+one participant. Training never automatically repeats preparation.
+
+```bash
+# All 16 participants, Full BPTT / Internal-DW / Clip / JReg, seeds 0/1/2.
+# Runs sequentially on ONE GPU; no DDP or server-specific scheduler.
+GPU=0 bash scripts/reproduce/train_test_ieeg.sh
+
+# One participant/method/seed; train and test can also be called separately.
+SUBJECTS=sub-CS41 ARM=internal_dw SEED=0 GPU=0 \
+  bash scripts/reproduce/train_test_ieeg.sh train
+SUBJECTS=sub-CS41 ARM=internal_dw SEED=0 GPU=0 \
+  bash scripts/reproduce/train_test_ieeg.sh test
+```
+
+Defaults are recorded in `configs/reproduce/ieeg.json`: K=64, test H=96,
+batch=4, accumulation=8, up to 100 epochs, validation patience=20, and no
+activation checkpointing. The shared model already accepts stimulus;
+Internal-DW builds one history-only noise-template bank from each participant's
+own training chunks and shares it across training seeds. Compact recurrent
+logging removes optional diagnostics, not DW calibration or training losses.
+
+Inputs default to `probe_inputs/ieeg_cohort_v1/prepared/sub-CS*.npz`.
+Each run writes `best.pth`, `last.pth`, `train.log`, `train_logs.jsonl`, and
+`test.json` in `experiments/ieeg_cohort_v1/<subject>/<method>/seedN/` and prints
+the checkpoint/result paths. Read `test.json -> primary_metric.value` for mean
+relative L2 over horizons 1:96. Rerunning the same command resumes checkpoints,
+skips validated completed tests, and continues past failed tasks. Do not launch
+overlapping queues on different servers. Use `--dry-run` to inspect commands.
+
+After all runs finish, `bash scripts/reproduce/train_test_ieeg.sh summary`
+writes `cohort_summary.json`. Each seed first averages participants equally;
+the table reports the mean and sample SD across the three seed averages.
+Percentage changes are paired within participant and seed before averaging.
+Figure 6 now reads these cohort results exclusively; incomplete cohorts do not
+fall back to old single-participant results.
+
+The same prepared subjects feed the existing probes and timing measurement:
+
+```bash
+GPU=0 bash scripts/reproduce/train_test_ieeg.sh regime
+GPU=0 bash scripts/reproduce/train_test_ieeg.sh utility
+GPU=0 bash scripts/reproduce/train_test_ieeg.sh noise
+# Use an idle, unshared GPU after the Full/DW runs and their templates exist.
+GPU=0 bash scripts/reproduce/train_test_ieeg.sh timing
+```
+
+Probes use seed 0 and preserve the existing per-subject definitions. Regime
+scores are averaged before display clipping. Utility bands describe variation
+across participant median curves, not training seeds; noise gains weight
+participants equally. Timing warms both arms up for 5 or 10 epochs (depending
+on chunk count), verifies DW calibration, and measures 3 training-loop epochs
+per run, excluding validation, checkpoint I/O and template construction. It
+reports mean and sample SD across three paired repeat-level participant means
+in `experiments/ieeg_cohort_timing_v1/timing_summary.json`.
+
+These public commands use fresh output directories and do not resume or
+overwrite the private `ieeg_fif_visual_v3` training queues.
+
 ### One-command Figure 6 reproduction
 
 After preparing the eight datasets described below, the entire Figure 6
@@ -313,7 +386,8 @@ wrapper never guesses private mount paths. The matched per-dataset runners are:
 
 | Data | Training entry point | Test entry point |
 |---|---|---|
-| MG, NARMA-5, iEEG, ETTm1, ETTm2 | `scripts/train/run_mem_one.sh` | `scripts/evaluate/run_assigned_dense_eval_1p5k_one.sh` |
+| MG, NARMA-5, ETTm1, ETTm2 | `scripts/train/run_mem_one.sh` | `scripts/evaluate/run_assigned_dense_eval_1p5k_one.sh` |
+| iEEG (16 participants + stimulus) | `scripts/reproduce/train_test_ieeg.sh train` | `scripts/reproduce/train_test_ieeg.sh test` |
 | Movie fMRI | `scripts/train/train_hcp_resgrad_mamba_v2.sh` | `scripts/evaluate/run_assigned_dense_eval_1p5k_one.sh` |
 | Shear flow | `scripts/train/run_thewell_arm.sh` | `scripts/evaluate/run_assigned_dense_eval_1p5k_one.sh` |
 | WeatherBench-2 | `scripts/train/run_wb2_arm.sh` | `scripts/evaluate/run_assigned_dense_eval_1p5k_one.sh` |
@@ -353,7 +427,7 @@ Synthetic MG, NARMA, and known-SNR data can be generated by the retained data
 scripts. ETTm1 and ETTm2 must first be downloaded from the upstream
 [`zhouhaoyi/ETDataset`](https://github.com/zhouhaoyi/ETDataset) repository and
 then converted with `scripts/data/prepare_temporal_candidate_screen_data.py`.
-HCP movie fMRI, The Well, and WeatherBench-2 must be obtained under their
+Movie iEEG, HCP movie fMRI, The Well, and WeatherBench-2 must be obtained under their
 upstream licenses; their paths are passed through `DATA_PATH`, `WELL_REPO`, or
 the dataset-specific environment variables documented in each runner.
 The Well registry helper is `scripts/data/download_thewell_registry.py`; it
@@ -366,6 +440,7 @@ data/
   synthetic/                       # generated MG/NARMA/known-SNR caches
   hcp_movie_features/<subject>/*MOVIE1*.npy
   ieeg/preprocessed_length_matched/*.fif
+  ieeg/clip_features/{clip_projected.npy,clip_frames.csv}
   weatherbench2_1p5_pilot/{metadata.json,*.npy}
 probe_inputs/temporal_candidate_regime_v1/{ettm1,ettm2}.npz
 external/the_well/gradient_pilots/datasets/shear_flow/data/
@@ -391,7 +466,12 @@ or relative paths.
 |---|---|---|
 | `PROJECT_ROOT` | Repository checkout | inferred automatically |
 | `DATA_PATH` | Dataset path for the HCP, The Well, or WB2 training runner | dataset-specific path under `data/` or `external/` |
-| `DATA_DIR` | Generated synthetic or iEEG cache directory | `data/synthetic` |
+| `DATA_DIR` | Generated synthetic cache directory | `data/synthetic` |
+| `FIF_ROOT`, `CLIP_ROOT` | iEEG preprocessed FIF and existing CLIP inputs | required for iEEG preparation |
+| `IEEG_PREPARED_ROOT` | Prepared subject archives | `probe_inputs/ieeg_cohort_v1` |
+| `IEEG_RUN_ROOT` | iEEG checkpoints and per-run test records | `experiments/ieeg_cohort_v1` |
+| `IEEG_PROBE_ROOT` | iEEG regime/utility/noise probe outputs | `probe_outputs/ieeg_cohort_v1` |
+| `IEEG_TIMING_ROOT` | Paired iEEG timing outputs | `experiments/ieeg_cohort_timing_v1` |
 | `HCP_DATA_PATH` | HCP path used by frozen-checkpoint probes | `data/hcp_movie_features` |
 | `WELL_REPO` | Checkout containing The Well data utilities | `external/the_well` |
 | `PREPARED_NPZ` | One prepared ETT or other temporal archive | derived under `probe_inputs/` |

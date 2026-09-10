@@ -10,6 +10,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import statistics
 from pathlib import Path
 
@@ -25,6 +26,29 @@ DATASET_LABEL = {
     "fmri": "Movie fMRI",
     "wb2": "WeatherBench-2",
 }
+
+
+def ieeg_cohort_timing():
+    root = Path(os.environ.get('IEEG_TIMING_ROOT', 'experiments/ieeg_cohort_timing_v1'))
+    path = root / 'timing_summary.json'
+    if not path.is_file():
+        return None
+    record = json.loads(path.read_text(encoding='utf-8'))
+    if (record.get('status') != 'complete' or not record.get('cohort_complete')
+            or record.get('participants') != 16 or record.get('paired_repeats') != 3):
+        raise ValueError('Incomplete iEEG cohort timing: ' + str(path))
+    for key in ('full_bptt', 'internal_dw', 'increase_percent'):
+        if not all(math.isfinite(float(record[key][stat])) for stat in ('mean', 'sd')):
+            raise ValueError('Invalid iEEG timing statistics')
+    return record
+
+
+def ieeg_tex_row(record):
+    if record is None:
+        return 'iEEG (cohort) & -- & -- & -- ' + r'\\' + '\n'
+    cells = [f"${record[k]['mean']:.2f} \\pm {record[k]['sd']:.2f}$"
+             for k in ('full_bptt', 'internal_dw', 'increase_percent')]
+    return 'iEEG (cohort) & ' + ' & '.join(cells) + ' ' + r'\\' + '\n'
 
 
 def percentile(values: list[float], q: float) -> float:
@@ -75,6 +99,9 @@ def main() -> None:
     args = ap.parse_args()
     root = Path(args.root)
     runs = [r for p in root.rglob("timing_meta.json") if (r := load_run(p, args.warmup_epochs))]
+    # The old single-participant/no-stimulus timing is not part of this cohort.
+    runs = [r for r in runs if r['dataset'] != 'ieeg']
+    ieeg = ieeg_cohort_timing()
     if not runs:
         raise SystemExit(f"no completed timing logs under {root}")
 
@@ -130,6 +157,7 @@ def main() -> None:
         w = csv.DictWriter(f, fieldnames=list(summaries[0]))
         w.writeheader(); w.writerows(summaries)
     (root / "timing_summary.json").write_text(json.dumps(summaries, indent=2) + "\n", encoding="utf-8")
+    (root / "ieeg_cohort_timing.json").write_text(json.dumps(ieeg, indent=2) + "\n", encoding="utf-8")
 
     tex = root / "timing_summary.tex"
     with tex.open("w", encoding="utf-8") as f:
@@ -141,6 +169,7 @@ def main() -> None:
                 f"{r['dataset']} & {r['exact_sec_per_epoch']:.2f} & {r['dw_sec_per_epoch']:.2f} & "
                 f"{r['time_overhead_pct_median']:+.1f}\\% \\\\\n"
             )
+        f.write(ieeg_tex_row(ieeg))
         f.write("\\bottomrule\n\\end{tabular}\n")
 
     appendix = Path(args.appendix_out)
@@ -190,9 +219,16 @@ def main() -> None:
                 f"{r['dw_sec_per_epoch']:.2f} & {r['time_overhead_pct_median']:+.1f} "
                 f"[{r['time_overhead_pct_q25']:+.1f}, {r['time_overhead_pct_q75']:+.1f}] \\\\\n"
             )
+        f.write(ieeg_tex_row(ieeg))
         f.write("    \\bottomrule\n")
         f.write("  \\end{tabular}\n")
         f.write("\\end{table}\n\n")
+        f.write('The iEEG cohort row instead reports mean $\\pm$ sample SD over three '
+                'paired repeat-level participant averages, in seconds per participant epoch. '
+                'Both arms warm up for 5 or 10 epochs before measuring three epochs; '
+                'DW calibration is checked explicitly. A dash means incomplete cohort timing.\n')
+        if ieeg is not None:
+            f.write('The iEEG timing GPU is recorded as \\texttt{' + ieeg['gpu_uuid'].replace('_', r'\_') + '}.\n')
         f.write(
             "Across the completed testbeds, Internal-DW changes median epoch time by "
             f"{min(r['time_overhead_pct_median'] for r in summaries):+.1f}\\% to "

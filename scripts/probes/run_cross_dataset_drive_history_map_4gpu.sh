@@ -81,10 +81,7 @@ PY
 }
 
 lane1() {
-  run_generic "${GPU_LIST[1]}" ieeg \
-    experiments/dual_wiener_screen/ieeg/theta_K64/dualwiener/seed0/best.pth \
-    1,2,4,8,16,24,32,48,64 1,2,4,8,16 \
-    --max-coordinates 256 --pca-rank 32 --pca-frames 2048
+  GPU="${GPU_LIST[1]}" bash scripts/reproduce/train_test_ieeg.sh regime
 }
 
 lane2() {
@@ -124,7 +121,7 @@ fi
 python -u scripts/plotting/plot_cross_dataset_drive_history_map.py \
   --dataset "MG=${OUT_ROOT}/mg.json" \
   --dataset "NARMA=${OUT_ROOT}/narma.json" \
-  --dataset "iEEG=${OUT_ROOT}/ieeg.json" \
+  --dataset "iEEG=${IEEG_PROBE_ROOT:-probe_outputs/ieeg_cohort_v1}/regime/cohort.json" \
   --dataset "Shear=${OUT_ROOT}/shear.json" \
   --dataset "WB2=${OUT_ROOT}/wb2.json" \
   --dataset "ETTm1=probe_outputs/temporal_candidate_regime_v1/ettm1.json" \

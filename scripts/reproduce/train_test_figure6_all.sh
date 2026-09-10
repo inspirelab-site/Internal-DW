@@ -174,6 +174,11 @@ run_tbptt() {
 
 run_dataset() {
   local data=$1 kind=$2
+  if [[ "${data}" == ieeg ]]; then
+    env GPU="${GPU}" SEEDS="${FIGURE6_SEEDS[*]}" ARM="" SUBJECTS="" \
+      bash scripts/reproduce/train_test_ieeg.sh
+    return $?
+  fi
   local -a arms
   if [[ "${kind}" == positive ]]; then
     arms=("${FIGURE6_POSITIVE_ARMS[@]}")

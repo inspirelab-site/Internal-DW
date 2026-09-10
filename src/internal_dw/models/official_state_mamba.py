@@ -130,6 +130,7 @@ class StatefulMambaBlock(nn.Module):
         dual_wiener: Optional[DualWienerController] = None,
         route_horizon: int = -1,
         route_layer: int = -1,
+        collect_diagnostics: bool = True,
     ):
         """Advance one Mamba block with either open or DW-routed gradients."""
 
@@ -186,6 +187,9 @@ class StatefulMambaBlock(nn.Module):
         y = y * self.act(z_gate)
         branch = self.dropout(self.out_proj(y))
         output = residual + float(forward_branch_scale) * branch
+
+        if not collect_diagnostics:
+            return output, (conv_state, ssm_state), {}
 
         branch_norm = branch.detach().float().reshape(
             branch.shape[0], -1
@@ -481,8 +485,11 @@ class OfficialStateMambaARModel(nn.Module, StimulusPoolingMixin):
                 dual_wiener=self.dual_wiener,
                 route_horizon=route_horizon,
                 route_layer=layer_index,
+                collect_diagnostics=not getattr(self, "compact_recurrent_logging", False),
             )
             next_states.append(next_state)
+            if not block_aux:
+                continue
             dt_means.append(block_aux["dt_mean"])
             dt_mins.append(block_aux["dt_min"])
             dt_maxs.append(block_aux["dt_max"])
@@ -509,6 +516,8 @@ class OfficialStateMambaARModel(nn.Module, StimulusPoolingMixin):
 
         if not return_aux:
             return prediction, h_next
+        if getattr(self, "compact_recurrent_logging", False):
+            return prediction, h_next, {}
         zero = predicted_flat.new_tensor(0.0)
         one = predicted_flat.new_tensor(1.0)
         aux = {

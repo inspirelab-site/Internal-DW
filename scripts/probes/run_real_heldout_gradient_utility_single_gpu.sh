@@ -83,10 +83,7 @@ if contains_dataset narma; then
 fi
 
 if contains_dataset ieeg; then
-  run_one \
-    ieeg \
-    "experiments/memtest_rerun/ieeg/theta_K64/ckpt/seed${SEED}/best.pth" \
-    64 "${SEQ_PAIRS}" "${COORDS_SEQ}" "1,8,16,32,64"
+  GPU="${GPU}" bash scripts/reproduce/train_test_ieeg.sh utility
 fi
 
 if contains_dataset shear; then

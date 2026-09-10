@@ -173,10 +173,6 @@ def evaluate_standard_ar_horizon_sweep(model, dataloader, args, rank=0, prefix="
 
 @torch.no_grad()
 def evaluate_standard_ar_free_rollout_curves(model, dataloader, args, rank=0, prefix="test"):
-    if bool(getattr(args, "stageb_stim_potential_residual_ar", False)):
-        return evaluate_stageb_stim_potential_residual_free_rollout_curves(model, dataloader, args, rank=rank, prefix=prefix)
-    if bool(getattr(args, "stageb_joint_potential_ar", False)):
-        return evaluate_stageb_joint_free_rollout_curves(model, dataloader, args, rank=rank, prefix=prefix)
     """Uninterrupted free-rollout curves for ordinary one-step AR models.
 
     These per-step curves are intended to diagnose whether error growth behaves

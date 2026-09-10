@@ -13,11 +13,9 @@ if [[ "${MODE}" == run ]]; then
   GPU=${GPU:-0} bash scripts/probes/run_added_noise_response_all.sh
 fi
 
-ADDED_NOISE_SUMMARY="probe_outputs/application_diagnostics_v1/added_noise_gain_summary.json"
-if [[ ! -s "${ADDED_NOISE_SUMMARY}" ]]; then
-  "${PYTHON}" scripts/results/build_added_noise_results.py \
-    --output "${ADDED_NOISE_SUMMARY}"
-fi
+ADDED_NOISE_SUMMARY="probe_outputs/application_diagnostics_cohort_v1/added_noise_gain_summary.json"
+"${PYTHON}" scripts/results/build_added_noise_results.py \
+  --output "${ADDED_NOISE_SUMMARY}"
 
 # The plotting modules validate the per-dataset ledgers they consume.
 "${PYTHON}" scripts/plotting/plot_application_diagnostics_combined.py \

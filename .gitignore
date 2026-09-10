@@ -137,6 +137,7 @@ conda-env/
 !/scripts/plotting/application_gradient_plot_ops.py
 !/scripts/data/prepare_hcp_shared_response_innovation.py
 !/scripts/data/prepare_known_snr_oracle.py
+!/scripts/data/prepare_ieeg.py
 !/scripts/data/prepare_known_snr_diagonal_ar1.py
 !/scripts/data/prepare_sequence_oas_innovation.py
 !/scripts/data/prepare_temporal_candidate_screen_data.py

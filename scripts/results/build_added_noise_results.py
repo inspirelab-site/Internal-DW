@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -81,8 +82,8 @@ def _source_specs(root: Path):
             "iEEG",
             "DW-Prior",
             "json",
-            root / "probe_outputs/real_internal_dw_prior_noise_response_v1/ieeg",
-            "ieeg_prior_snr{token}.json",
+            Path(os.environ.get('IEEG_PROBE_ROOT', root / 'probe_outputs/ieeg_cohort_v1')) / 'noise',
+            "snr{token}.json",
             "prior",
         ),
         (
@@ -123,7 +124,7 @@ def build(root: Path) -> dict:
             gain = _pipeline_gain(path) if kind == "npz" else _json_gain(path, family)
             identity.append(gain[0])
             nonlinear.append(gain[1])
-            sources.append(str(path.relative_to(root)).replace("\\", "/"))
+            sources.append(str(path.resolve()))
         panels.append(
             {
                 "dataset": dataset,

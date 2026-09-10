@@ -142,32 +142,76 @@ provide all three and align their first two dimensions with `*_state`.
 
 ## Movie iEEG
 
-The raw input directory is flat:
+The current benchmark fits models separately for 16 participants, with neural
+theta features and known visual movie stimulus. It is not cross-subject
+generalization. Supply the following **preprocessed** inputs:
 
 ```text
-data/ieeg/preprocessed_length_matched/
-  P41CS_R1_enc_macro_theta.fif
-  P41CS_R2_enc_macro_theta.fif
+data/ieeg/
+  preprocessed_length_matched/
+    P41CS_R1_enc_macro_theta.fif
+    P41CS_R2_enc_macro_theta.fif
+    P42CS_R1_enc_macro_theta.fif
+    ...
+  clip_features/
+    clip_projected.npy
+    clip_frames.csv
+```
+
+FIF filenames must match `P<number>CS_R<number>_enc_macro_theta.fif`. All
+recordings of one participant must have the same channel set and order.
+The cohort IDs are CS41, CS42, CS43, CS44, CS47, CS48, CS49, CS51, CS53, CS54,
+CS55, CS56, CS57, CS58, CS60 and CS62. Channels are inferred per participant
+(80 in 15 participants; 40 in CS62 for the measured cohort).
+
+The stimulus array must be finite `[frames, 512]`. The CSV needs a `frame`
+column containing consecutive `frame_0.png`, `frame_1.png`, ... names;
+zero-padded indices are also accepted. Features are the existing 25-fps CLIP
+ViT-B/32 projected visual features, not a new 1-fps extraction. The first FIF
+sample must already align with cropped movie onset: do not apply another
+ten-second offset. No audio or HRF shift is used. The forecast assumes the
+aligned movie stimulus is known at the times consumed by the model.
+
+```bash
+FIF_ROOT=/path/to/preprocessed_length_matched \
+CLIP_ROOT=/path/to/clip_features \
+  bash scripts/reproduce/train_test_ieeg.sh prepare
+```
+
+Only iEEG is processed. Append `--subject sub-CS41` to prepare one participant.
+MNE and SciPy are installed by the `paper` extra. The adapter reuses the original
+anti-alias filter/decimation to 50 Hz, selects common 70/15/15 movie-time
+boundaries within each participant, removes 256 samples before split boundaries,
+and creates 1024-sample chunks without crossing recording boundaries.
+Repeated viewings share split boundaries. State and stimulus each receive
+per-participant training-chunk z-scoring, replacing only exactly zero standard
+deviations by one. The prepared loader must use `prepared_temporal_standardize=0`
+because this normalization has already been applied.
+
+**Upstream processing is not reimplemented here:** the supplied theta FIF
+features already include whole-recording per-frequency z-scoring and noncausal
+filtering. Only the adapter's second-stage normalization is train-only. Raw NWB
+files are not interchangeable with these FIF inputs; obtain or reproduce the
+matching upstream neural and CLIP feature extraction first.
+
+```text
+probe_inputs/ieeg_cohort_v1/
+  inventory.json
+  preparation_status.json
+  prepared/sub-CS41.npz
+  prepared/sub-CS42.npz
   ...
 ```
 
-Files are discovered with
-`<subject>_*_<task>_<contact>_<band>.fif`. The paper default is subject
-`P41CS`, task `enc`, contact `macro`, band `theta`, and a 20 ms model step.
-Pass a different raw directory with:
-
-```bash
-EXTRA_ARGS="--ieeg_root /path/to/preprocessed_length_matched" \
-  DATASET=ieeg COND=theta K=64 METHOD=dwstructured SEED=0 GPU=0 \
-  bash scripts/train/run_mem_one.sh
-```
-
-Reading raw FIF files requires MNE and SciPy. The loader anti-alias filters and
-decimates each run, concatenates the time axis, and writes a reusable cache
-named `ieeg_<subject>_<task>_<contact>_<band>_<step>ms_ch<max>.npz` under
-`DATA_DIR`. That cache contains one `float32` array `X` with shape `[T, C]`.
-Train/validation/test blocks and normalization are constructed by the loader;
-the raw recording must not be manually pre-split.
+Each NPZ contains `train_state`, `validation_state`, `test_state` with shape
+`[chunks, 1024, channels]`; corresponding `*_drive` arrays have shape
+`[chunks, 1024, 512]`. All arrays are float32. `metadata_json` records channel
+order, source recordings, split boundaries and normalization statistics.
+For the measured FIF cohort there are 464/87/87 train/validation/test chunks
+in total: 32/6/6 for a two-recording participant and 16/3/3 for CS44/CS58/CS60.
+Missing inputs are not downloaded automatically, and training does not rerun
+preparation. The legacy single-subject `X` cache is not used by the public
+cohort runner.
 
 ## HCP movie fMRI
 

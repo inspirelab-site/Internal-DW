@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,8 @@ from paper_figure_style import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts.reproduce.train_test_ieeg import collect_cohort
 METHODS = ["Clip", "JReg", "TBPTT", "Static", "Internal-DW"]
 COLORS = {
     "Clip": COLOR_CLIP,
@@ -85,12 +88,6 @@ SOURCES = {
         "Clip": "probe_outputs/internal_dw_AB_dense_1p5k_v1/A/narma/clip_K32_seed*.json",
         "JReg": "probe_outputs/internal_dw_AB_dense_1p5k_v1/A/narma/jreg_K32_seed*.json",
     },
-    "iEEG": {
-        "Exact BPTT": "probe_outputs/dense_multistart_rel_l2_1p5k_v1/ieeg/exact_seed*.json",
-        "Internal-DW": "probe_outputs/dense_multistart_rel_l2_1p5k_v1/ieeg/dw_seed*.json",
-        "Clip": "probe_outputs/internal_dw_AB_dense_1p5k_v1/A/ieeg/clip_K64_seed*.json",
-        "JReg": "probe_outputs/internal_dw_AB_dense_1p5k_v1/A/ieeg/jreg_K64_seed*.json",
-    },
     "fMRI": {
         "Exact BPTT": "probe_outputs/dense_multistart_rel_l2_1p5k_v1/fmri/exact_seed*.json",
         "Internal-DW": "probe_outputs/dense_multistart_rel_l2_1p5k_v1/fmri/dw_seed*.json",
@@ -109,6 +106,10 @@ SOURCES = {
 def paired_changes() -> dict[str, dict[str, np.ndarray]]:
     changes: dict[str, dict[str, np.ndarray]] = {}
     for dataset in DATASETS:
+        if dataset == "iEEG":
+            changes[dataset] = {r['method']: np.asarray(r['paired_seed_changes'])
+                                for r in collect_cohort() if r['arm'] != 'full_bptt'}
+            continue
         exact = _means(SOURCES[dataset]["Exact BPTT"])
         exact_mean = float(np.mean(exact))
         changes[dataset] = {}

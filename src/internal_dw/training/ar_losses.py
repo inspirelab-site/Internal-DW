@@ -943,41 +943,42 @@ def compute_recurrent_state_bptt_loss(
             step_losses.append(step_loss)
 
             with torch.no_grad():
-                rel = relative_l2(prediction, target)
+                rel = relative_l2(prediction, target) if not bool(getattr(args, "compact_recurrent_logging", False)) else step_loss.detach()
                 step_rels.append(rel)
-                correlations.append(corrcoef_flat(prediction, target))
-                prediction_stds.append(prediction.std())
-                target_stds.append(target.std())
-                if isinstance(aux, dict):
-                    hidden_norms.append(
-                        aux.get(
-                            "hidden_norm", prediction.new_tensor(0.0)
-                        ).detach()
-                    )
-                    alpha_means.append(
-                        aux.get(
-                            "alpha_mean", prediction.new_tensor(0.0)
-                        ).detach()
-                    )
-                    alpha_mins.append(
-                        aux.get(
-                            "alpha_min", prediction.new_tensor(0.0)
-                        ).detach()
-                    )
-                    alpha_maxs.append(
-                        aux.get(
-                            "alpha_max", prediction.new_tensor(0.0)
-                        ).detach()
-                    )
-                    for key, destination in (
-                        ("resgrad_gate", route_gates),
-                        ("resgrad_routing", route_enabled),
-                        ("resgrad_branch_residual_ratio", route_ratios),
-                        ("resgrad_branch_norm", route_branch_norms),
-                        ("resgrad_residual_norm", route_residual_norms),
-                    ):
-                        if key in aux:
-                            destination.append(aux[key].detach())
+                if not bool(getattr(args, "compact_recurrent_logging", False)):
+                    correlations.append(corrcoef_flat(prediction, target))
+                    prediction_stds.append(prediction.std())
+                    target_stds.append(target.std())
+                    if isinstance(aux, dict):
+                        hidden_norms.append(
+                            aux.get(
+                                "hidden_norm", prediction.new_tensor(0.0)
+                            ).detach()
+                        )
+                        alpha_means.append(
+                            aux.get(
+                                "alpha_mean", prediction.new_tensor(0.0)
+                            ).detach()
+                        )
+                        alpha_mins.append(
+                            aux.get(
+                                "alpha_min", prediction.new_tensor(0.0)
+                            ).detach()
+                        )
+                        alpha_maxs.append(
+                            aux.get(
+                                "alpha_max", prediction.new_tensor(0.0)
+                            ).detach()
+                        )
+                        for key, destination in (
+                            ("resgrad_gate", route_gates),
+                            ("resgrad_routing", route_enabled),
+                            ("resgrad_branch_residual_ratio", route_ratios),
+                            ("resgrad_branch_norm", route_branch_norms),
+                            ("resgrad_residual_norm", route_residual_norms),
+                        ):
+                            if key in aux:
+                                destination.append(aux[key].detach())
 
             has_next = (step + 1) < horizon
             if (
@@ -1037,6 +1038,10 @@ def compute_recurrent_state_bptt_loss(
         getattr(args, "forward_jacobian_lambda", 0.0)
     )
     loss = base_loss + jacobian_lambda * jacobian_loss
+
+    if bool(getattr(args, "compact_recurrent_logging", False)):
+        return loss, {"loss": loss.detach(), "ar/recurrent_bptt_loss": base_loss.detach(),
+                      "ar/recurrent_num_starts": float(len(chosen))}
 
     if raw.training and bool(getattr(args, "fast_train_logging", False)):
         return loss, {

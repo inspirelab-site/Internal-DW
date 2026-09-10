@@ -6,10 +6,13 @@ from __future__ import annotations
 import csv
 import json
 import re
+import sys
 from pathlib import Path
 from statistics import mean, stdev
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from scripts.reproduce.train_test_ieeg import collect_cohort, result_root
 OUT = ROOT / "probe_outputs" / "figure6_raw_metrics_v1"
 METHOD_ORDER = ["Exact BPTT", "Clip", "JReg", "TBPTT", "Static", "Internal-DW"]
 FAVORABLE = ["MG", "ETTm1", "ETTm2", "Shear"]
@@ -64,12 +67,6 @@ SOURCES = {
         "Clip": "probe_outputs/internal_dw_AB_dense_1p5k_v1/A/narma/clip_K32_seed*.json",
         "JReg": "probe_outputs/internal_dw_AB_dense_1p5k_v1/A/narma/jreg_K32_seed*.json",
     },
-    "iEEG": {
-        "Exact BPTT": "probe_outputs/dense_multistart_rel_l2_1p5k_v1/ieeg/exact_seed*.json",
-        "Internal-DW": "probe_outputs/dense_multistart_rel_l2_1p5k_v1/ieeg/dw_seed*.json",
-        "Clip": "probe_outputs/internal_dw_AB_dense_1p5k_v1/A/ieeg/clip_K64_seed*.json",
-        "JReg": "probe_outputs/internal_dw_AB_dense_1p5k_v1/A/ieeg/jreg_K64_seed*.json",
-    },
     "fMRI": {
         "Exact BPTT": "probe_outputs/dense_multistart_rel_l2_1p5k_v1/fmri/exact_seed*.json",
         "Internal-DW": "probe_outputs/dense_multistart_rel_l2_1p5k_v1/fmri/dw_seed*.json",
@@ -112,6 +109,17 @@ def read_seed_values(pattern: str) -> tuple[list[float], list[str]]:
 def collect() -> list[dict]:
     rows: list[dict] = []
     for dataset in DATASETS:
+        if dataset == "iEEG":
+            for r in collect_cohort():
+                rows.append(dict(dataset=dataset, regime="identified boundary", method=r['method'],
+                                 metric="subject-mean dense 1:96 relative L2",
+                                 seed0=r['per_seed'][0], seed1=r['per_seed'][1], seed2=r['per_seed'][2],
+                                 mean=r['mean'], sample_sd=r['sample_sd'],
+                                 figure6_percent_change_from_exact_mean=r['mean_percent'],
+                                 percent_change_aggregation="mean of participant-seed paired changes",
+                                 source_glob=str(result_root() / 'sub-*' / r['arm'] / 'seed*/test.json'),
+                                 source_jsons=r['source_jsons']))
+            continue
         exact_values, _ = read_seed_values(SOURCES[dataset]["Exact BPTT"])
         exact_mean = mean(exact_values)
         for method in METHOD_ORDER:
@@ -192,7 +200,7 @@ def write_tex(rows: list[dict]) -> None:
         r"\centering",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{3.0pt}",
-        r"\caption{\textbf{Absolute forecasting errors underlying Figure~\ref{fig:assigned-estimator-performance}.} Values are dense $1{:}\lceil1.5K\rceil$ relative $L_2$ (mean $\pm$ sample standard deviation over three matched seeds); lower is better. Figure~\ref{fig:assigned-estimator-performance} reports the same values as percentage changes from the corresponding Exact-BPTT mean. Bold marks the lowest mean in each row.}",
+        r"\caption{\textbf{Absolute forecasting errors underlying Figure~\ref{fig:assigned-estimator-performance}.} Values are dense $1{:}\lceil1.5K\rceil$ relative $L_2$ (mean $\pm$ sample standard deviation over three matched seeds); lower is better. For iEEG, each seed averages 16 participants equally and percentage changes are paired within participant and seed; other datasets use the corresponding full-BPTT mean as reference. Bold marks the lowest mean in each row.}",
         r"\label{tab:forecasting-controls-absolute}",
         r"\begin{tabular}{lrrrrrr}",
         r"\toprule",

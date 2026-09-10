@@ -623,7 +623,8 @@ def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experime
                 print(f"Epoch {epoch:03d} | val/loss={val_loss:.6f}", flush=True)
                 save_eval_json(os.path.join(exp_dir, "last_val_logs.json"), {**train_logs, **val_logs})
                 _append_epoch_log(exp_dir, epoch_logs, args=args)
-                _plot_training_curves(exp_dir)
+                if not bool(getattr(args, "compact_recurrent_logging", False)):
+                    _plot_training_curves(exp_dir)
                 # Compute the post-epoch early-stop state first, so last.pth carries
                 # exactly the state a resume needs to continue as if uninterrupted.
                 if val_loss < best:
@@ -688,5 +689,6 @@ def train_model(model, train_loader, val_loader, args, rank=0, exp_dir="experime
                 _append_epoch_log(exp_dir, epoch_logs, args=args)
 
     if is_rank0(rank):
-        _plot_training_curves(exp_dir)
+        if not bool(getattr(args, "compact_recurrent_logging", False)):
+            _plot_training_curves(exp_dir)
         print(f"Best val/loss={best:.6f}")

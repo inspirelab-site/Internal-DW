@@ -37,6 +37,46 @@ from probe_wiener_oracle import (
 )
 
 
+def load_test_arrays(path):
+    with np.load(path,allow_pickle=False) as z:
+        x=np.ascontiguousarray(z['test_state'],dtype=np.float32)
+        u=np.ascontiguousarray(z['test_drive'],dtype=np.float32)
+    if x.ndim!=3 or u.ndim!=3 or x.shape[:2]!=u.shape[:2] or not u.shape[-1]:
+        raise ValueError('Expected aligned [chunks,time,channels] state and stimulus')
+    if not np.isfinite(x).all() or not np.isfinite(u).all(): raise ValueError('Nonfinite inputs')
+    return x,u
+
+
+def setup_matched(a):
+    from internal_dw.models.registry import build_model
+    from probe_setup import Bundle
+    from probe_data_ops import plan_draws
+    ckpt=torch.load(a.ckpt,map_location='cpu',weights_only=False)
+    cfg=argparse.Namespace(**ckpt['args'])
+    if cfg.dataset!='prepared_temporal_driven' or cfg.prepared_temporal_standardize!=0:
+        raise ValueError('Requires the normalized FIF v3 driven checkpoint')
+    if not cfg.dataset_has_external_input or cfg.resgrad_policy!='dualwiener':
+        raise ValueError('Requires a stimulus-present Internal-DW checkpoint')
+    if Path(a.npz).resolve()!=Path(cfg.prepared_temporal_npz).resolve():
+        raise ValueError('Probe input differs from checkpoint input')
+    if a.K!=cfg.mamba_bptt_horizon or a.burnin!=cfg.mamba_burnin:
+        raise ValueError('K/burnin differs from checkpoint')
+    state,stim=load_test_arrays(a.npz)
+    model=build_model(cfg,rank=0)
+    model.load_state_dict(ckpt['model'],strict=True)
+    model=model.to(a.device).eval(); dw=model.dual_wiener
+    if state.shape[-1]!=cfg.roi_dim or stim.shape[-1]!=cfg.stim_dim:
+        raise ValueError('Checkpoint/input dimension mismatch')
+    a.depth=int(cfg.simple_depth)
+    rows,starts,axis=plan_draws(state,a)
+    print(f'[matched input] test chunks={len(rows)} neural={state.shape[-1]} stimulus={stim.shape[-1]} epoch={ckpt["epoch"]}; no re-normalization',flush=True)
+    return Bundle(model=model,dw=dw,xt=torch.as_tensor(state[rows],device=a.device),
+        ut=torch.as_tensor(stim[rows],device=a.device),rows_t=torch.arange(len(rows),device=a.device),
+        draw_starts=starts,axis=axis,state_dim=state.shape[-1],stim_dim=stim.shape[-1],
+        max_horizon=dw.max_horizon,depth=a.depth,batch=len(rows))
+
+
+
 def _load_templates(path: str, K: int, state_dim: int, seed: int):
     with np.load(path, allow_pickle=False) as archive:
         if "innovation_templates" not in archive.files:
@@ -164,6 +204,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_args(parser)
     parser.add_argument("--artifact", required=True)
+    parser.add_argument("--prepared-checkpoint", action="store_true", help="Use the trained subject's aligned state/stimulus archive and exact architecture")
     parser.add_argument("--snr", type=float, required=True)
     parser.add_argument("--noise-draws", type=int, default=8)
     parser.add_argument("--out", required=True)
@@ -179,7 +220,7 @@ def main() -> None:
     os.environ.pop("DUAL_WIENER_INNOVATION_KEY", None)
     torch.manual_seed(int(args.seed))
     np.random.seed(int(args.seed))
-    bundle = setup(args)
+    bundle = setup_matched(args) if args.prepared_checkpoint else setup(args)
     fit_np, eval_np, estimator = _load_templates(
         args.artifact, int(args.K), int(bundle.state_dim), int(args.seed)
     )

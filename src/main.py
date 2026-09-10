@@ -609,6 +609,8 @@ def build_parser():
     )
     p.add_argument("--compact_train_logs", action=argparse.BooleanOptionalAction, default=True,
                    help="Write compact train_logs.jsonl by dropping disabled/zero diagnostic keys.")
+    p.add_argument("--compact_recurrent_logging", action="store_true",
+                   help="Skip optional recurrent diagnostics and epoch plots; retain loss, checkpoints and DW calibration.")
     p.add_argument("--eval_free_rollout_curves", action=argparse.BooleanOptionalAction, default=True,
                    help="During test evaluation, save free-rollout per-step corr/error curves for standard AR models.")
 

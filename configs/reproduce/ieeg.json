@@ -1,0 +1,29 @@
+{
+  "protocol": "fif-v3-stimulus-cohort",
+  "subjects": ["sub-CS41", "sub-CS42", "sub-CS43", "sub-CS44", "sub-CS47", "sub-CS48", "sub-CS49", "sub-CS51", "sub-CS53", "sub-CS54", "sub-CS55", "sub-CS56", "sub-CS57", "sub-CS58", "sub-CS60", "sub-CS62"],
+  "seeds": [0, 1, 2],
+  "methods": ["full_bptt", "internal_dw", "clip", "jreg"],
+  "eval_horizon": 96,
+  "train_options": {
+    "mode": "train", "dataset": "prepared_temporal_driven",
+    "prepared_temporal_standardize": 0, "num_workers": 0, "resume": "auto",
+    "model_name": "official_mamba_state", "simple_hidden_dim": 256,
+    "simple_depth": 4, "mamba_d_state": 16, "mamba_d_conv": 4, "mamba_expand": 2,
+    "mamba_bptt_horizon": 64, "mamba_burnin": 32,
+    "mamba_train_starts_per_sequence": 16, "mamba_loss_type": "rel_l2", "mamba_loss_decay": 1.0,
+    "window_size": 16, "local_batch_size": 4, "grad_accum_steps": 8,
+    "base_lr": 0.0001, "weight_decay": 0.0001, "grad_clip": 1.0,
+    "num_epochs": 100, "early_stop_patience": 20, "eval_every": 1,
+    "ar_optimizer": "adam", "ar_scheduler": "step", "ar_min_lr": 0.000001,
+    "ar_loss": "mse", "ar_one_step_lambda": 1.0, "ar_train_starts_per_sequence": 1,
+    "ar_train_stride": 1, "ar_eval_stride": 4, "recurrent_val_start_batch": 16
+  },
+  "flags": ["ar_train_random_starts", "no-bptt_loss", "no-recurrent_grad_checkpoint", "fast_train_logging", "compact_recurrent_logging"],
+  "dw_options": {
+    "resgrad_policy": "dualwiener", "dual_wiener_noise_model": "lagged_residual_bootstrap",
+    "dual_wiener_ema": 0.95, "dual_wiener_residual_ema": 0.99,
+    "dual_wiener_warmup_batches": 8, "dual_wiener_probe_every": 4, "dual_wiener_min_probes": 8
+  },
+  "clip_options": {"grad_clip": 0.1},
+  "jreg_options": {"forward_jacobian_lambda": 0.1, "forward_jacobian_target": 1.0, "forward_jacobian_eps": 0.001}
+}

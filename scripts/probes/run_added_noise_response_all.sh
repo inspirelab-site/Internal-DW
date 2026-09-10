@@ -71,15 +71,12 @@ run_vector() {
 }
 
 run_prior() {
+  if [[ "$1" == ieeg ]]; then
+    GPU="${GPU}" bash scripts/reproduce/train_test_ieeg.sh noise
+    return
+  fi
   local dataset="$1" ckpt artifact out_root probe data_args=()
   case "${dataset}" in
-    ieeg)
-      ckpt=experiments/neuro_domain_templates_single_v1/ieeg/theta_K64/dualwiener_domain_ieeg_fullrank_ar64_templates/seed0/best.pth
-      artifact=artifacts/domain_innovation/ieeg_theta_longmemory_factor_templates_K64.npz
-      out_root=probe_outputs/real_internal_dw_prior_noise_response_v1/ieeg
-      probe=scripts/probes/probe_ieeg_prior_noise_response.py
-      data_args=(--npz data/synthetic/ieeg_P41CS_enc_macro_theta_20ms_ch0.npz --state-key X --data-preprocess ieeg_test --hidden 256 --depth 4 --K 64 --burnin 32 --batch 16 --draws 4)
-      ;;
     fmri)
       ckpt=experiments/hcp_movie1/internal_dw_prior_fmri_ddp4_v1/official_mamba_state_hid4096_D4_residual_resgradDualWienerDomainSubjectCrossfit_BPTT64_S16/seed0/best.pth
       artifact=artifacts/internal_dw_prior_fmri_v1/hcp_movie1_seed0_subject_crossfit_templates_K64.npz
