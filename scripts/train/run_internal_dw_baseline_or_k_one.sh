@@ -15,6 +15,10 @@ K=${K:?set K}
 SEED=${SEED:?set SEED}
 GPUS=${GPUS:?set GPUS}
 
+source configs/reproduce/figure6.sh
+export NUM_WORKERS=${NUM_WORKERS:-$(figure6_num_workers "${DATA}" "${ARM}" "${SEED}")}
+echo "[paper-config] data=${DATA} arm=${ARM} seed=${SEED} num_workers=${NUM_WORKERS}"
+
 case "${PHASE}" in
   A) [[ "${ARM}" == clip || "${ARM}" == jreg ]] || {
        echo "[refuse] phase A only launches the two missing arms: clip or jreg" >&2; exit 2; } ;;
@@ -26,6 +30,11 @@ esac
 ROOT=${ROOT:-experiments/internal_dw_baselines_k_v1}
 SYNC_ROOT=${SYNC_ROOT:-artifacts/internal_dw_baselines_k_v1_sync}
 EVAL_ROOT=${EVAL_ROOT:-probe_outputs/internal_dw_baselines_k_v1}
+# Hyperparameter screening must not evaluate candidates on the test split.
+TRAIN_ONLY=${TRAIN_ONLY:-0}
+if [[ "${TRAIN_ONLY}" == 1 ]]; then
+  export RUN_MODE=train MODE=train
+fi
 mkdir -p "${SYNC_ROOT}" "${EVAL_ROOT}"
 
 run_id="${PHASE}_${DATA}_${ARM}_K${K}_s${SEED}"
@@ -106,7 +115,7 @@ case "${DATA}" in
     env DATASET="${dataset}" COND="${cond}" K="${K}" METHOD="${method}" \
       SEED="${SEED}" GPUS="${GPUS}" HIDDEN="${hidden}" \
       BATCH="${batch}" GRAD_ACCUM="${accum}" EPOCHS=100 ES=20 LR=1e-4 \
-      NUM_WORKERS=0 RECURRENT_EVAL_HORIZON_BATCH=3 \
+      NUM_WORKERS="${NUM_WORKERS}" RECURRENT_EVAL_HORIZON_BATCH=3 \
       GRAD_CLIP="${GRAD_CLIP}" EXTRA_ARGS="${EXTRA_ARGS}" \
       SAVE_BASE="${save_base}" SKIP_EXISTING=1 RESUME=auto \
       bash scripts/train/run_mem_one.sh
@@ -137,7 +146,7 @@ case "${DATA}" in
       bash scripts/train/run_wb2_arm.sh
     eval_out="${EVAL_ROOT}/${PHASE}/${DATA}/${ARM}_K${K}_seed${SEED}.json"
     mkdir -p "$(dirname "${eval_out}")"
-    if [[ ! -s "${eval_out}" ]]; then
+    if [[ "${TRAIN_ONLY}" != 1 && ! -s "${eval_out}" ]]; then
       first_gpu=${GPUS%%,*}
       CUDA_VISIBLE_DEVICES="${first_gpu}" python -u scripts/evaluate/evaluate_weatherbench2_acc.py \
         --ckpt "${out}/best.pth" --data "${WB2_DATA_PATH:-data/weatherbench2_1p5_pilot}" \

@@ -126,6 +126,35 @@ bash scripts/reproduce/05_figure_6.sh
 bash scripts/reproduce/render_all.sh
 ```
 
+### Optional validation-selected Clip/JReg controls
+
+```bash
+GPUS=0,1,2,3 bash scripts/reproduce/sweep_clip_jreg.sh
+```
+
+This runs four independent single-GPU jobs, not DDP. Each method receives
+three seed-0 candidates: Clip thresholds `0.1, 0.3, 1.0` and JReg coefficients
+`0.01, 0.1, 1.0`. Candidates are trained without test evaluation; the minimum
+dense validation relative-L2 selects one value per dataset and method. The
+selected value is then evaluated with seeds 0/1/2. For iEEG, selection uses
+the equal-weight mean validation score across all 16 participants, with one
+shared coefficient. Other training settings retain the Figure 6 defaults.
+
+Results are isolated under `experiments/clip_jreg_val_sweep_v1/`; existing
+paper results are not overwritten or substituted automatically. Each method
+has a `selection.json`; `sweep_summary.json` records choices, test means/sample
+standard deviations across seed-level averages, and failures. Rerun the same
+command to resume; failed jobs do not stop the remaining jobs, and selection
+requires all candidates (and all iEEG participants). Do not run two copies
+against the same `SWEEP_ROOT` simultaneously.
+
+Use `--datasets mg ettm1 ettm2 shear` for a subset, `--stage screen` for
+validation-only screening, or `--dry-run` to print the plan. Dataset locations
+are supplied with `PREPARED_INPUT_ROOT` (ETTm archives), `IEEG_PREPARED_ROOT`
+(containing `prepared/sub-CS*.npz`), `SHEAR_DATA_PATH` (containing train/valid/test),
+`HCP_DATA_PATH`, and `WB2_DATA_PATH`. Set `WELL_REPO` when its data utilities
+are kept outside the checkout.
+
 ### Movie iEEG: prepare, train, and test
 
 The iEEG benchmark uses **16 participants with subject-specific models and visual stimulus**, not

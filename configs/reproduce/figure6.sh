@@ -6,6 +6,25 @@ FIGURE6_BOUNDARY_DATASETS=(narma ieeg fmri wb2)
 FIGURE6_POSITIVE_ARMS=(full_bptt internal_dw clip jreg tbptt static)
 FIGURE6_BOUNDARY_ARMS=(full_bptt internal_dw clip jreg)
 
+# Training workers recorded by the reference runs (not evaluation workers).
+figure6_num_workers() {
+  local data=$1 arm=$2 seed=$3
+  case "${data}" in
+    mg|narma|fmri) echo 4 ;;
+    ettm1|ettm2|ieeg) echo 0 ;;
+    shear)
+      case "${arm}" in clip|jreg) echo 2 ;; *) echo 0 ;; esac ;;
+    wb2)
+      case "${arm}" in
+        clip|jreg) echo 2 ;;
+        exact|full_bptt) if [[ "${seed}" == 0 ]]; then echo 2; else echo 0; fi ;;
+        dw|internal_dw) echo 0 ;;
+        *) echo "unsupported WB2 arm: ${arm}" >&2; return 2 ;;
+      esac ;;
+    *) echo "unknown dataset: ${data}" >&2; return 2 ;;
+  esac
+}
+
 declare -A FIGURE6_TRAIN_HORIZON=(
   [mg]=32 [ettm1]=64 [ettm2]=64 [shear]=32
   [narma]=32 [ieeg]=64 [fmri]=64 [wb2]=48

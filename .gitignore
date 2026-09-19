@@ -194,3 +194,6 @@ conda-env/
 !/scripts/results/build_training_time_table.py
 !/scripts/train/train_hcp_resgrad_mamba_v2.sh
 !/scripts/data/validate_weatherbench2_pilot.py
+
+# Keep interpreter caches ignored after the public-script allowlist above.
+**/__pycache__/
