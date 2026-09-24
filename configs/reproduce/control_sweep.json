@@ -2,7 +2,7 @@
   "grids": {"clip": [0.1, 0.3, 1.0], "jreg": [0.01, 0.1, 1.0]},
   "selection_seed": 0,
   "report_seeds": [0, 1, 2],
-  "selection_metric": "dense validation mean_relative_l2 at the reporting horizon",
+  "selection_metric": "val/loss",
   "datasets": {
     "mg": {"K": 32, "batch": 4, "accum": 8, "num_workers": 4},
     "ettm1": {"K": 64, "batch": 32, "accum": 1, "num_workers": 0},

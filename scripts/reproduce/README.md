@@ -15,17 +15,16 @@ Run the public API smoke test first:
 bash scripts/reproduce/00_smoke_test.sh
 ```
 
-The known-SNR mechanism closure is self-contained and precedes the benchmark
-workflow. It generates its synthetic archive and analytic reference, trains
-the matched seed-0 forecasting arms, runs all frozen-checkpoint probes, and
-renders Figure 4:
+Known-SNR generates its data, selects Clip/JReg/TBPTT by saved seed-0
+training validation loss, and reports three-seed dense test metrics and
+frozen training-stream probes. Plotting is independent:
 
 ```bash
-GPU=0 GPUS=0,1,2,3 bash scripts/reproduce/train_test_known_snr.sh
+GPU=0 bash scripts/reproduce/train_test_known_snr.sh
+bash scripts/reproduce/03_figure_4.sh
 ```
 
-Omit `GPUS` to execute the same resumable stages on one GPU; the launcher
-adjusts accumulation to retain effective batch 32.
+See the root README for individual stages and output paths.
 
 The reader-facing MG workflow keeps training and testing explicit while using
 the same output contract as the benchmark evaluators:
@@ -52,11 +51,17 @@ GPU=0 bash scripts/reproduce/train_test_figure6_all.sh
 ```
 
 The four favorable datasets run first. The queue skips completed test JSONs,
+uses the final validation-selected Clip/JReg/TBPTT/Static settings,
 resumes interrupted checkpoints, and renders Figure 6 after all runs finish.
 Failures are isolated by dataset, so a bad download is recorded while later
 datasets continue; the final process status is nonzero until every requested
 dataset succeeds. Licensed datasets must already be present in the layouts
 documented in `docs/DATA_FORMATS.md`.
+
+To repeat Clip/JReg selection, run `bash scripts/reproduce/sweep_clip_jreg.sh`.
+It selects on saved seed-0 training `val/loss` without test evaluation.
+Add `--stage selected` after screening to train/test the selected settings
+over seeds 0, 1, and 2; completed runs in the same sweep directory are reused.
 
 Then reproduce paper items in order:
 

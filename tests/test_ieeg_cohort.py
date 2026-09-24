@@ -97,8 +97,8 @@ def test_training_settings_and_methods(tmp_path):
         assert '--no-recurrent_grad_checkpoint' in cmd and '--compact_recurrent_logging' in cmd
         assert ('--resgrad_routing' in cmd) == (arm == 'internal_dw')
         if arm == 'internal_dw': assert option('dual_wiener_min_probes') == '8'
-        if arm == 'clip': assert option('grad_clip') == '0.1'
-        if arm == 'jreg': assert option('forward_jacobian_lambda') == '0.1'
+        if arm == 'clip': assert option('grad_clip') == '0.3'
+        if arm == 'jreg': assert option('forward_jacobian_lambda') == '0.01'
 
 
 def test_timing_preserves_training_and_checks_readiness(tmp_path):

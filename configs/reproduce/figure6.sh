@@ -43,6 +43,15 @@ declare -A FIGURE6_SINGLE_GRAD_ACCUM=(
 
 # Selected once from seed-0 validation; test results were not read by either
 # selector. These values are fixed when reproducing the reported benchmark.
+declare -A FIGURE6_CLIP_NORM=(
+  [mg]=1.0 [ettm1]=0.3 [ettm2]=0.3 [shear]=0.3
+  [narma]=0.1 [ieeg]=0.3 [fmri]=1.0 [wb2]=1.0
+)
+declare -A FIGURE6_JREG_LAMBDA=(
+  [mg]=1.0 [ettm1]=1.0 [ettm2]=1.0 [shear]=0.01
+  [narma]=1.0 [ieeg]=0.01 [fmri]=1.0 [wb2]=0.01
+)
+
 declare -A FIGURE6_STATIC_GAIN=(
   [mg]=0.6 [ettm1]=0.3 [ettm2]=0.6 [shear]=0.3
 )

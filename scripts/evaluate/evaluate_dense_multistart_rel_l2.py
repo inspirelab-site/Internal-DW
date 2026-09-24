@@ -405,6 +405,8 @@ def _prepare_args(checkpoint: Mapping[str, Any], cli) -> argparse.Namespace:
     args = argparse.Namespace(**dict(checkpoint["args"]))
     args.local_batch_size = int(cli.batch_size or getattr(args, "local_batch_size", 1))
     args.num_workers = int(cli.num_workers)
+    if getattr(cli, "data_path", None):
+        args.data_path = str(cli.data_path)
     args.dataset_has_external_input = dataset_has_external_input(args.dataset)
     args.dataset_task_type = dataset_task_type(args.dataset)
     args.dataset_evaluator_name = dataset_evaluator_name(args.dataset)
@@ -414,6 +416,7 @@ def _prepare_args(checkpoint: Mapping[str, Any], cli) -> argparse.Namespace:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ckpt", required=True)
+    parser.add_argument("--data-path", help="override the checkpoint dataset location only")
     parser.add_argument("--out", required=True)
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--split", choices=("val", "test"), default="test")

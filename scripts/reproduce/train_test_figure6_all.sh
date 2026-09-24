@@ -79,6 +79,8 @@ run_phase_arm() {
   env PHASE="${phase}" DATA="${data}" ARM="${arm}" K="${k}" SEED="${seed}" \
     GPUS="${GPU}" ROOT="${FIGURE6_TRAIN_ROOT}" SYNC_ROOT="${FIGURE6_SYNC_ROOT}" \
     EVAL_ROOT="${FIGURE6_AB_OUT_ROOT}" \
+    CLIP_NORM="${CLIP_NORM:-${FIGURE6_CLIP_NORM[$data]}}" \
+    JREG_LAMBDA="${JREG_LAMBDA:-${FIGURE6_JREG_LAMBDA[$data]}}" \
     MEM_BATCH="${batch}" MEM_GRAD_ACCUM="${accum}" \
     ETT_BATCH="${batch}" ETT_GRAD_ACCUM="${accum}" \
     SHEAR_BATCH="${batch}" SHEAR_GRAD_ACCUM="${accum}" \

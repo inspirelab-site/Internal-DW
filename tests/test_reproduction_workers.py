@@ -43,7 +43,9 @@ def test_reference_workers_all_methods_and_seeds():
 
 
 def test_known_snr_full_reference_workers():
-    assert shell('source configs/reproduce/known_snr.sh; echo "$KNOWN_SNR_NUM_WORKERS"') == '4'
+    config = json.loads((ROOT / 'configs/reproduce/known_snr.json').read_text())
+    assert config['probes']['reference_workers'] == 4
+    assert config['training']['num_workers'] == 0
 
 
 def test_baseline_resolves_and_exports_workers_before_launch():
@@ -54,3 +56,44 @@ def test_baseline_resolves_and_exports_workers_before_launch():
     assert shell(prefix + 'unset NUM_WORKERS;\n' + preamble + '\necho "$NUM_WORKERS"').splitlines()[-1] == '4'
     assert shell(prefix + 'NUM_WORKERS=2;\n' + preamble + '\necho "$NUM_WORKERS"').splitlines()[-1] == '2'
     assert 'NUM_WORKERS=0 RECURRENT_EVAL_HORIZON_BATCH' not in source
+
+
+SELECTED = {
+    'mg': (1.0, 1.0), 'ettm1': (0.3, 1.0), 'ettm2': (0.3, 1.0),
+    'shear': (0.3, 0.01), 'narma': (0.1, 1.0), 'ieeg': (0.3, 0.01),
+    'fmri': (1.0, 1.0), 'wb2': (1.0, 0.01),
+}
+
+
+@pytest.mark.parametrize('dataset', SELECTED)
+def test_selected_control_defaults_and_sweep_overrides(dataset):
+    source = (ROOT / 'scripts/train/run_internal_dw_baseline_or_k_one.sh').read_text()
+    block = 'GRAD_CLIP=1.0' + source.split('GRAD_CLIP=1.0', 1)[1].split('out=""', 1)[0]
+    prefix = ('source configs/reproduce/figure6.sh; '
+              f'DATA={dataset}; unset CLIP_NORM JREG_LAMBDA JREG_TARGET JREG_EPS; ')
+    clip, jreg = SELECTED[dataset]
+    assert float(shell(prefix + 'ARM=clip; ' + block + '\necho "$GRAD_CLIP"')) == clip
+    args = shell(prefix + 'ARM=jreg; ' + block + '\necho "$EXTRA_ARGS"').split()
+    assert float(args[args.index('--forward_jacobian_lambda') + 1]) == jreg
+    assert float(shell(prefix + 'ARM=clip; CLIP_NORM=0.1; ' + block + '\necho "$GRAD_CLIP"')) == 0.1
+    args = shell(prefix + 'ARM=jreg; JREG_LAMBDA=0.1; ' + block + '\necho "$EXTRA_ARGS"').split()
+    assert float(args[args.index('--forward_jacobian_lambda') + 1]) == 0.1
+
+
+def test_ieeg_selected_defaults_match_figure6():
+    from scripts.reproduce.train_test_ieeg import train_command
+    for arm, key, value in [('clip', '--grad_clip', SELECTED['ieeg'][0]),
+                            ('jreg', '--forward_jacobian_lambda', SELECTED['ieeg'][1])]:
+        cmd = train_command(Path('prepared/sub-CS41.npz'), Path('out'), arm, 0)
+        assert float(cmd[cmd.index(key) + 1]) == value
+    output = shell('source configs/reproduce/figure6.sh; '
+                   'echo "${FIGURE6_CLIP_NORM[ieeg]} ${FIGURE6_JREG_LAMBDA[ieeg]}"')
+    assert tuple(map(float, output.split())) == SELECTED['ieeg']
+
+
+def test_one_command_propagates_selected_controls():
+    source = (ROOT / 'scripts/reproduce/train_test_figure6_all.sh').read_text()
+    function = source.split('run_phase_arm() {', 1)[1].split('run_primary()', 1)[0]
+    assert 'CLIP_NORM="${CLIP_NORM:-${FIGURE6_CLIP_NORM[$data]}}"' in function
+    assert 'JREG_LAMBDA="${JREG_LAMBDA:-${FIGURE6_JREG_LAMBDA[$data]}}"' in function
+    assert 'bash scripts/reproduce/train_test_ieeg.sh' in source

@@ -150,7 +150,6 @@ conda-env/
 !/scripts/probes/probe_heldout_delayed_gradient_utility.py
 !/scripts/probes/probe_ieeg_blocked_longmemory_templates.py
 !/scripts/probes/probe_known_snr_diagonal_ar_gain.py
-!/scripts/probes/probe_known_snr_diagonal_ar_route_risk.py
 !/scripts/probes/probe_known_snr_failure_profile.py
 !/scripts/probes/known_snr_gradient_ops.py
 !/scripts/probes/known_snr_route_ops.py
@@ -172,10 +171,6 @@ conda-env/
 !/scripts/train/run_internal_dw_compute_overhead_one.sh
 !/scripts/evaluate/run_internal_dw_fixed_horizon_one.sh
 !/scripts/train/run_internal_dw_fixed_horizon_single_cell.sh
-!/scripts/train/run_known_snr_diagonal_ar_controls_ddp4.sh
-!/scripts/train/run_known_snr_diagonal_ar_forecasting.sh
-!/scripts/probes/run_known_snr_diagonal_ar_gain.sh
-!/scripts/probes/run_known_snr_diagonal_ar_route_risk.sh
 !/scripts/probes/run_known_snr_exact_panels12.sh
 !/scripts/train/run_mem_one.sh
 !/scripts/train/run_positive_static_gain_one.sh
@@ -197,3 +192,6 @@ conda-env/
 
 # Keep interpreter caches ignored after the public-script allowlist above.
 **/__pycache__/
+!/scripts/probes/known_snr_online_core.py
+!/scripts/probes/probe_known_snr_online_risk.py
+!/scripts/train/known_snr_tbptt.py

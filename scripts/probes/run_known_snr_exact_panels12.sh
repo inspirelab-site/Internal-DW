@@ -7,7 +7,7 @@ cd "$(dirname "$0")/../.."
 export PYTHONPATH="$(pwd)/src:$(pwd)/scripts:${PYTHONPATH:-}"
 export PYTHONUNBUFFERED=1
 
-IFS=',' read -r -a GPU_IDS <<< "${GPUS:-0,1,2,3}"
+IFS=',' read -r -a GPU_IDS <<< "${GPUS:-0}"
 if (( ${#GPU_IDS[@]} < 1 || ${#GPU_IDS[@]} > 4 )); then
   echo "[error] GPUS must contain one to four physical GPU ids" >&2
   exit 2
@@ -18,13 +18,13 @@ REPETITIONS=${REPETITIONS:-4}
 EVAL_NOISE_DRAWS=${EVAL_NOISE_DRAWS:-64}
 BATCH=${BATCH:-0}
 FORCE=${FORCE:-0}
-CKPT=${CKPT:-experiments/known_snr_oracle/known_snr_ar/mixed_K32/ckpt/seed0/best.pth}
-DATA=${DATA:-data/synthetic/known_snr_ar_D8_T1024_traj96_a5fd79afa1e5f_s0.npz}
-ORACLE_FILE=${ORACLE_FILE:-artifacts/known_snr_ar/oracle_K32.npz}
-ROOT=${ROOT:-probe_outputs/known_snr_diagonal_ar_closure/seed${SEED}}
+CKPT=${CKPT:?set CKPT to the frozen Full-BPTT checkpoint}
+DATA=${DATA:?set DATA to the Known-SNR NPZ archive}
+ORACLE_FILE=${ORACLE_FILE:?set ORACLE_FILE to the prepared analytic reference}
+ROOT=${ROOT:-experiments/known_snr/profiles}
 REPLICATE_DIR=${REPLICATE_DIR:-${ROOT}/panels_1_2_replicates}
 OUT=${OUT:-${ROOT}/panels_1_2.json}
-LOG_DIR=${LOG_DIR:-logs/known_snr_diagonal_ar_closure/panels_1_2_seed${SEED}}
+LOG_DIR=${LOG_DIR:-${ROOT}/logs}
 
 if ! [[ "${REPETITIONS}" =~ ^[1-9][0-9]*$ ]]; then
   echo "[error] REPETITIONS must be positive" >&2
@@ -86,8 +86,6 @@ for ((replicate=0; replicate<REPETITIONS; replicate++)); do
 done
 python scripts/results/build_known_snr_results.py panels12 \
   "${inputs[@]}" --out "${OUT}"
-python scripts/results/build_known_snr_results.py closure \
-  --root "${ROOT}" --quiet
 
 echo "[done] strict Exact-checkpoint panels 1--2"
 echo "[out] ${OUT}"

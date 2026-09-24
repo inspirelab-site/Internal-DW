@@ -68,10 +68,9 @@ def main():
     args = parser.parse_args()
 
     closure_root = Path(args.closure_root)
-    panels_1_2 = _load(closure_root / "panels_1_2.json")
-    gain_summary = _load(closure_root / "gain_identification.json")
-    route_risk = _load(closure_root / "route_risk.json")
-    forecasting = _load(closure_root / "forecasting_controls.json")
+    panels_1_2 = _load(closure_root / "profiles/panels_1_2.json")
+    route_risk = _load(closure_root / "risk/summary.json")
+    forecasting = _load(closure_root / "forecast_summary.json")
 
     horizons = np.asarray(panels_1_2["horizon"], dtype=float)
     colors = {
@@ -237,18 +236,20 @@ def main():
         borderpad=0.05,
     )
 
-    # Panel 3: held-out local route-message MSE.
+    # Panel 3: frozen training-stream local route risk, three matched seeds.
     route_methods = route_risk["methods"]
-    route_reference = route_methods["exact_bptt_open"]["sum_mse_over_sum_open"]
-    route_keys = ["misplaced", "diagonal_ar_dw", "oracle"]
-    route_labels = ["misplaced", "DW", "true-moment\ntransfer"]
+    route_reference = route_methods["full_bptt"]["mean"]
+    route_keys = ["misplaced", "online_dw", "local_oracle"]
+    route_labels = ["misplaced", "DW", "local oracle"]
     route_values = [
-        route_methods[key]["sum_mse_over_sum_open"] for key in route_keys
+        route_methods[key]["mean"] for key in route_keys
     ]
     route_positions = np.arange(len(route_values))
     ax_route.bar(
         route_positions,
         route_values,
+        yerr=[route_methods[key]["sample_sd"] for key in route_keys],
+        capsize=2,
         color=[
             colors["light_gray"],
             colors["blue"],
@@ -274,7 +275,7 @@ def main():
         route_labels, rotation=27, ha="right", rotation_mode="anchor"
     )
     ax_route.set_xlim(-0.55, 2.55)
-    ax_route.set_ylim(0.0, 0.31)
+    ax_route.set_ylim(0.0, 1.2 * max(route_methods[k]['mean'] + route_methods[k]['sample_sd'] for k in route_keys))
     ax_route.set_ylabel("risk / open", labelpad=0.5, fontweight="bold")
 
     # Show fully open BPTT as a reference line on a small broken-axis strip.
@@ -310,19 +311,20 @@ def main():
     ax_route_top.plot([0], [0], transform=ax_route_top.transAxes, **break_style)
     ax_route.plot([0], [1], transform=ax_route.transAxes, **break_style)
 
-    # Panel 4: matched seed-0 forecasting controls.  Methods are placed on the
+    # Panel 4: matched three-seed forecasting means and sample deviations.
+    # Methods are placed on the
     # x axis so the vertical displacement directly communicates lower error.
-    forecast_results = forecasting["results"]
+    forecast_results = forecasting["methods"]
     forecast_keys = [
-        "exact_bptt",
-        "clip_0p1",
+        "full_bptt",
+        "clip",
         "jreg",
-        "tbptt8",
-        "diagonal_ar_dw",
+        "tbptt",
+        "internal_dw",
     ]
     forecast_labels = ["Full", "Clip", "JReg", "TBPTT", "DW"]
     forecast_values = np.asarray(
-        [forecast_results[key]["mean_relative_l2"] for key in forecast_keys]
+        [forecast_results[key]["mean"] for key in forecast_keys]
     )
     x_positions = np.arange(len(forecast_keys))
     markers = ["o", "^", "D", "s", "o"]
@@ -337,7 +339,7 @@ def main():
         x_positions, forecast_values, markers, marker_colors, forecast_keys
     ):
         kwargs = {}
-        if key == "tbptt8":
+        if key == "tbptt":
             kwargs = {
                 "facecolors": "white",
                 "edgecolors": color,
@@ -348,12 +350,15 @@ def main():
         ax_forecast.scatter(
             x, value, s=MARKER_SIZE**2, marker=marker, zorder=3, **kwargs
         )
-    exact_value = float(forecast_results["exact_bptt"]["mean_relative_l2"])
+    forecast_sd = np.asarray([forecast_results[k]['sample_sd'] for k in forecast_keys])
+    ax_forecast.errorbar(x_positions, forecast_values, yerr=forecast_sd,
+                        fmt='none', ecolor='0.4', capsize=2, lw=0.8)
+    exact_value = float(forecast_results["full_bptt"]["mean"])
     ax_forecast.axhline(
         exact_value, color="0.55", ls="--", lw=LINE_REFERENCE
     )
-    low = float(np.min(forecast_values)) - 0.012
-    high = float(np.max(forecast_values)) + 0.012
+    low = float(np.min(forecast_values - forecast_sd)) - 0.012
+    high = float(np.max(forecast_values + forecast_sd)) + 0.012
     ax_forecast.set_xlim(-0.55, len(forecast_keys) - 0.45)
     ax_forecast.set_ylim(low, high)
     ax_forecast.set_xticks(x_positions)
@@ -387,11 +392,10 @@ def main():
     plt.close(fig)
 
     summary = {
-        "panels_1_2_source": str(closure_root / "panels_1_2.json"),
+        "panels_1_2_source": str(closure_root / "profiles/panels_1_2.json"),
         "closure_root": str(closure_root),
         "repetitions": int(panels_1_2["protocol"]["repetitions"]),
         "median_curve_k_grad_star": k_grad_star,
-        "gain_error": gain_summary["summary"],
         "route_risk_over_open": dict(
             zip(["fully open", *route_labels], [route_reference, *route_values])
         ),

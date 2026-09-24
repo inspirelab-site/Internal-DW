@@ -37,33 +37,40 @@ the released experiments.
 
 ## Reproduce the known-SNR closure
 
-The known-SNR experiment is the self-contained mechanism check and should be
-run before the real-data benchmarks. It generates the stationary diagonal
-AR(1) data, trains the seed-0 Full-BPTT checkpoint, constructs the analytic
-oracle used only by the labeled oracle comparisons, fits the assigned
-diagonal-AR estimator from the training split, and completes all five panels:
+This experiment generates its own data. Run the complete numerical experiment
+on one GPU (no DDP):
 
 ```bash
-GPU=0 GPUS=0,1,2,3 bash scripts/reproduce/train_test_known_snr.sh
+GPU=0 bash scripts/reproduce/train_test_known_snr.sh
 ```
 
-`GPU` selects the single device used by Full BPTT and the frozen probes;
-`GPUS` selects the devices used by the Internal-DW and forecasting-control
-training. The command above is the recorded four-GPU routing protocol. A
-one-GPU machine can run the same resumable workflow with `GPU=0` alone while
-preserving optimizer effective batch 32.
+Settings are in `configs/reproduce/known_snr.json`. Clip, JReg, and TBPTT
+are selected using seed-0 training `val/loss`; the selected settings, Full
+BPTT, and Internal-DW are then trained and tested over seeds 0, 1, and 2.
+Testing uses the common dense evaluator: a continuous 48-step rollout,
+with equal weighting over horizons, origins, and trajectories.
 
-The command is resumable and needs no downloaded dataset. Its main outputs are:
+Stages can also be run separately: `prepare`, `screen`, `train`, `test`,
+`probes` (gradient profiles and local risk), or `risk` (local risk only).
+The frozen probes retain their recorded workers=4 reference training;
+all five forecasting methods use workers=0, batch=4, accumulation=8.
+The risk probe keeps the reference network weights fixed and updates only
+the lagged DW controller over two training-stream passes.
 
-```text
-probe_outputs/known_snr_diagonal_ar_closure/seed0/closure_summary.json
-figs/known_snr_closure.pdf
+Outputs under `experiments/known_snr/`:
+
+- `training/<method>/<value>/seed<seed>/best.pth`: selected checkpoint.
+- `selection.json`: candidate validation losses and selected parameters.
+- `test/<method>/seed<seed>.json`: test metric in `primary_metric.value`.
+- `forecast_summary.json`: three-seed means and sample standard deviations.
+- `profiles/panels_1_2.json` and `risk/summary.json`: mechanism measurements.
+
+Use `KNOWN_SNR_ROOT` and `KNOWN_SNR_DATA_DIR` to change output and data
+locations. Plotting is separate:
+
+```bash
+bash scripts/reproduce/03_figure_4.sh
 ```
-
-The gain-identification, route-risk, and forecasting stages all use the same
-preassigned diagonal-AR estimator. The true process parameters are not exposed
-to that estimator; they are retained separately for the analytic reference
-curves and oracle arm.
 
 ## Train and test a model
 
@@ -128,6 +135,10 @@ bash scripts/reproduce/render_all.sh
 
 ### Optional validation-selected Clip/JReg controls
 
+The Figure 6 one-command launcher uses the final validation-selected settings
+in `configs/reproduce/figure6.sh` and `configs/reproduce/ieeg.json`.
+To repeat parameter selection instead, run:
+
 ```bash
 GPUS=0,1,2,3 bash scripts/reproduce/sweep_clip_jreg.sh
 ```
@@ -135,21 +146,24 @@ GPUS=0,1,2,3 bash scripts/reproduce/sweep_clip_jreg.sh
 This runs four independent single-GPU jobs, not DDP. Each method receives
 three seed-0 candidates: Clip thresholds `0.1, 0.3, 1.0` and JReg coefficients
 `0.01, 0.1, 1.0`. Candidates are trained without test evaluation; the minimum
-dense validation relative-L2 selects one value per dataset and method. The
-selected value is then evaluated with seeds 0/1/2. For iEEG, selection uses
+saved training `val/loss` selects one value per dataset and method. Dense
+validation relative-L2 is not used for parameter selection. The
+screening stops after writing the selected value; it does not run test or
+start seeds 1/2 by default. For iEEG, selection uses
 the equal-weight mean validation score across all 16 participants, with one
 shared coefficient. Other training settings retain the Figure 6 defaults.
 
-Results are isolated under `experiments/clip_jreg_val_sweep_v1/`; existing
-paper results are not overwritten or substituted automatically. Each method
+Results are written under `experiments/clip_jreg_val_sweep_v1/`. Each method
 has a `selection.json`; `sweep_summary.json` records choices, test means/sample
 standard deviations across seed-level averages, and failures. Rerun the same
 command to resume; failed jobs do not stop the remaining jobs, and selection
 requires all candidates (and all iEEG participants). Do not run two copies
 against the same `SWEEP_ROOT` simultaneously.
 
-Use `--datasets mg ettm1 ettm2 shear` for a subset, `--stage screen` for
-validation-only screening, or `--dry-run` to print the plan. Dataset locations
+Use `--datasets mg ettm1 ettm2 shear` for a subset, `--stage selected` to
+explicitly start selected three-seed train/test runs after reviewing the screening,
+or `--dry-run` to print the plan. `JOBS_PER_GPU=2` enables two independent jobs
+per GPU without changing per-run batches. Dataset locations
 are supplied with `PREPARED_INPUT_ROOT` (ETTm archives), `IEEG_PREPARED_ROOT`
 (containing `prepared/sub-CS*.npz`), `SHEAR_DATA_PATH` (containing train/valid/test),
 `HCP_DATA_PATH`, and `WB2_DATA_PATH`. Set `WELL_REPO` when its data utilities
@@ -275,8 +289,9 @@ GPU=0 bash scripts/reproduce/train_test_figure6_all.sh
 The queue runs the four favorable cases first (MG, ETTm1, ETTm2, and shear
 flow), followed by NARMA-5, iEEG, movie fMRI, and WeatherBench-2. Within each
 dataset it completes every reported arm and seeds 0, 1, and 2 before moving to
-the next dataset. Static gain and TBPTT use the validation-selected values
-recorded in `configs/reproduce/figure6.sh`. The queue is resumable: nonempty
+the next dataset. Clip, JReg, Static gain, and TBPTT use the validation-selected
+values recorded in `configs/reproduce/figure6.sh` (iEEG uses
+`configs/reproduce/ieeg.json`). The queue is resumable: nonempty
 test JSON files are skipped and interrupted checkpoints resume automatically.
 Failure is isolated by dataset: a missing or malformed input is recorded and
 the queue continues with every later dataset. After all datasets have been
@@ -466,7 +481,8 @@ The loaders expect the following top-level organization by default:
 
 ```text
 data/
-  synthetic/                       # generated MG/NARMA/known-SNR caches
+  synthetic/                       # generated MG/NARMA caches
+  known_snr/                       # generated Known-SNR archive
   hcp_movie_features/<subject>/*MOVIE1*.npy
   ieeg/preprocessed_length_matched/*.fif
   ieeg/clip_features/{clip_projected.npy,clip_frames.csv}

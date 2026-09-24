@@ -31,11 +31,33 @@ def tag(value):
 def metric(path, split):
     data = read(path)
     value = float(data['primary_metric']['value'])
+    expected = 'val/loss' if split == 'val' else 'mean_relative_l2'
     if (data.get('status') != 'complete' or data.get('split') != split
-            or data['primary_metric']['name'] != 'mean_relative_l2'
+            or data['primary_metric']['name'] != expected
             or not math.isfinite(value)):
         raise ValueError('Invalid ' + split + ' result: ' + str(path))
     return value
+
+
+def saved_validation(checkpoint):
+    """Read the training criterion, never recompute it with the test evaluator."""
+    import torch
+    checkpoint = Path(checkpoint)
+    blob = torch.load(checkpoint, map_location='cpu', weights_only=False)
+    epoch = int(blob['epoch'])
+    value = blob.get('metrics', {}).get('val/loss', blob.get('best_val'))
+    if value is not None and blob.get('best_val') is not None:
+        if not math.isclose(float(value), float(blob['best_val']), rel_tol=1e-7, abs_tol=1e-12):
+            raise ValueError('Checkpoint validation loss does not match its best_val')
+    if value is None:
+        raise ValueError('Checkpoint is missing saved training val/loss')
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError('Non-finite saved val/loss')
+    return dict(status='complete', split='val',
+                primary_metric=dict(name='val/loss', value=value),
+                checkpoint=dict(path=str(checkpoint.resolve()), epoch=epoch),
+                source='saved training validation loss; no dense evaluation')
 
 
 def choose(grid, scores):
@@ -140,12 +162,18 @@ def one(args, config, task, gpu, split):
     checkpoints = list(output.rglob('best.pth'))
     if len(checkpoints) != 1:
         raise ValueError('Expected exactly one best.pth under ' + str(output))
+    checkpoint = checkpoints[0]
     complete.touch()
+    if split == 'val':
+        result = output / 'selection_val_loss.json'
+        write(result, saved_validation(checkpoint))
+        print('[done]', task, split, metric(result, split), flush=True)
+        return
     result = output / (split + '.json')
     if not result.exists():
         partial = result.with_suffix('.partial.json')
-        execute(eval_command(checkpoints[0], partial, task[0], task[1], split, config),
-                output / (split + '.log'), env_for(gpu))
+        evaluation = eval_command(checkpoint, partial, task[0], task[1], split, config)
+        execute(evaluation, output / (split + '.log'), env_for(gpu))
         metric(partial, split)
         partial.replace(result)
     print('[done]', task, split, metric(result, split), flush=True)
@@ -170,24 +198,33 @@ def phase(args, config, tasks, split):
                 print('[failed]', failure, flush=True)
             finally:
                 pending.task_done()
-    with ThreadPoolExecutor(max_workers=len(args.gpus)) as pool:
-        list(pool.map(worker, args.gpus))
+    slots = args.gpus * getattr(args, 'jobs_per_gpu', 1)
+    with ThreadPoolExecutor(max_workers=len(slots)) as pool:
+        list(pool.map(worker, slots))
     return failures
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--gpus', default='0,1,2,3')
+    p.add_argument('--jobs-per-gpu', type=int, default=1)
     p.add_argument('--root', type=Path, default=ROOT / 'experiments/clip_jreg_val_sweep_v1')
     p.add_argument('--config', type=Path, default=ROOT / 'configs/reproduce/control_sweep.json')
     p.add_argument('--datasets', nargs='+')
-    p.add_argument('--stage', choices=['all', 'screen', 'selected'], default='all')
+    p.add_argument('--stage', choices=['all', 'screen', 'selected'], default='screen')
     p.add_argument('--dry-run', action='store_true')
     args = p.parse_args()
+    if args.jobs_per_gpu < 1:
+        p.error('--jobs-per-gpu must be at least 1')
     args.root = args.root.resolve(); config = read(args.config)
+    if config.get('selection_metric') != 'val/loss' or config.get('selection_seed') != 0:
+        p.error('Selection requires saved training val/loss and selection_seed=0')
     args.gpus = args.gpus.split(',')
     if len(set(args.gpus)) != len(args.gpus) or not all(g.isdigit() for g in args.gpus):
         p.error('Use unique physical GPU IDs separated by commas')
+    print('[queue] GPUs=' + ','.join(args.gpus) +
+          ' jobs_per_gpu=' + str(args.jobs_per_gpu) +
+          ' total_slots=' + str(len(args.gpus) * args.jobs_per_gpu), flush=True)
     datasets = args.datasets or list(config['datasets'])
     if not set(datasets) <= set(config['datasets']) or len(set(datasets)) != len(datasets):
         p.error('Use known, unique dataset names')
@@ -205,7 +242,7 @@ def main():
     for d in datasets:
         for a, grid in config['grids'].items():
             try:
-                scores = [statistics.mean(metric(run_dir(args.root, (d, a, v, seed, s)) / 'val.json', 'val')
+                scores = [statistics.mean(metric(run_dir(args.root, (d, a, v, seed, s)) / 'selection_val_loss.json', 'val')
                                           for s in subjects(d)) for v in grid]
                 best = choose(grid, scores)
                 record = dict(dataset=d, method=a, selection_seed=seed, grid=grid,

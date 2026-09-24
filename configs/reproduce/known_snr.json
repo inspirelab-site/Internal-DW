@@ -1,0 +1,116 @@
+{
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "selection_seed": 0,
+  "selection_metric": "val/loss",
+  "grids": {
+    "clip": [
+      0.1,
+      0.3,
+      1
+    ],
+    "jreg": [
+      0.01,
+      0.1,
+      1
+    ],
+    "tbptt": [
+      4,
+      8,
+      16
+    ]
+  },
+  "training": {
+    "dataset": "known_snr_ar",
+    "model_name": "official_mamba_state",
+    "simple_hidden_dim": 128,
+    "simple_depth": 4,
+    "mamba_bptt_horizon": 32,
+    "mamba_burnin": 32,
+    "mamba_train_starts_per_sequence": 1,
+    "mamba_loss_type": "mse",
+    "window_size": 16,
+    "local_batch_size": 4,
+    "grad_accum_steps": 8,
+    "num_workers": 0,
+    "base_lr": 0.0001,
+    "weight_decay": 0.0001,
+    "grad_clip": 1,
+    "num_epochs": 100,
+    "early_stop_patience": 20,
+    "ar_optimizer": "adam",
+    "ar_scheduler": "step",
+    "snr_ar_dim": 8,
+    "snr_ar_len": 1024,
+    "snr_ar_traj": 96,
+    "snr_ar_seed": 0,
+    "snr_ar_coefficients": [
+      0.995,
+      0.98,
+      0.95,
+      0.9,
+      -0.995,
+      -0.98,
+      -0.95,
+      -0.9
+    ],
+    "forward_jacobian_lambda": 0,
+    "forward_jacobian_target": 1,
+    "forward_jacobian_eps": 0.001,
+    "bptt_detach_period": 0,
+    "recurrent_grad_checkpoint": true,
+    "resgrad_routing": false,
+    "resgrad_policy": "all",
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "mamba_d_state": 16,
+    "mamba_d_conv": 4,
+    "mamba_expand": 2,
+    "simple_dropout": 0,
+    "mamba_loss_decay": 1,
+    "mamba_train_stride": 1,
+    "ar_train_starts_per_sequence": 1,
+    "ar_train_stride": 1,
+    "ar_train_random_starts": true,
+    "ar_shared_rollout_start": false,
+    "ar_eval_stride": 4,
+    "ar_loss": "mse",
+    "ar_one_step_lambda": 1,
+    "ar_min_lr": 0.000001,
+    "ar_step_size": 100,
+    "ar_gamma": 0.5,
+    "eval_every": 1,
+    "bptt_loss": false,
+    "recurrent_eval_horizon_batch": 9,
+    "test_horizons": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32
+    ]
+  },
+  "dw": {
+    "dual_wiener_ema": 0.95,
+    "dual_wiener_residual_ema": 0.99,
+    "dual_wiener_warmup_batches": 8,
+    "dual_wiener_probe_every": 4,
+    "dual_wiener_min_probes": 1,
+    "dual_wiener_noise_model": "diagonal_gaussian"
+  },
+  "evaluation": {
+    "horizon": 48,
+    "max_origins": 64,
+    "origin_stride": 1
+  },
+  "probes": {
+    "reference_workers": 4,
+    "epochs": 2,
+    "draws": 64,
+    "repetitions": 4
+  }
+}

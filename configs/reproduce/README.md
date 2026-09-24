@@ -14,7 +14,12 @@ Readers may override `BATCH`, `GRAD_ACCUM`, and the other documented variables
 at launch time. Such overrides are useful for hardware constraints but are no
 longer the exact paper training schedule.
 
-`known_snr.sh` records the single-seed closure settings, including the
-canonical four-GPU routed arms, used by
-`scripts/reproduce/train_test_known_snr.sh`. `figure6.sh` records the eight
-benchmark horizons, one-GPU batch geometry, and validation-selected controls.
+`known_snr.json` records the Known-SNR candidate grids, three reporting seeds,
+single-GPU training settings, evaluation settings, and frozen risk probes used
+by `scripts/reproduce/train_test_known_snr.sh`.
+
+`figure6.sh` records the eight benchmark horizons, one-GPU batch geometry,
+worker counts, and validation-selected Clip/JReg/TBPTT/Static settings.
+`ieeg.json` records the multi-participant stimulus-present iEEG protocol and
+its selected Clip/JReg settings. `control_sweep.json` defines the optional
+seed-0 Clip/JReg search; selection uses saved training `val/loss` only.

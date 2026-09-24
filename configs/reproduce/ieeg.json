@@ -24,6 +24,6 @@
     "dual_wiener_ema": 0.95, "dual_wiener_residual_ema": 0.99,
     "dual_wiener_warmup_batches": 8, "dual_wiener_probe_every": 4, "dual_wiener_min_probes": 8
   },
-  "clip_options": {"grad_clip": 0.1},
-  "jreg_options": {"forward_jacobian_lambda": 0.1, "forward_jacobian_target": 1.0, "forward_jacobian_eps": 0.001}
+  "clip_options": {"grad_clip": 0.3},
+  "jreg_options": {"forward_jacobian_lambda": 0.01, "forward_jacobian_target": 1.0, "forward_jacobian_eps": 0.001}
 }

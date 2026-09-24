@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One idempotent run for the competing-baseline (A) or horizon-interaction (B)
-# study.  The server queues below are the intended entry points.
+# study, using validation-selected defaults unless explicitly overridden.
 set -euo pipefail
 
 SCRIPT_ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
@@ -56,11 +56,9 @@ if [[ -s "${done_file}" ]]; then exit 0; fi
 GRAD_CLIP=1.0
 EXTRA_ARGS=""
 if [[ "${ARM}" == clip ]]; then
-  # Exact already uses the standard 1.0 safeguard.  This is the deliberately
-  # stronger amplitude-only baseline used in the paper comparison.
-  GRAD_CLIP=${CLIP_NORM:-0.1}
+  GRAD_CLIP=${CLIP_NORM:-${FIGURE6_CLIP_NORM[$DATA]}}
 elif [[ "${ARM}" == jreg ]]; then
-  EXTRA_ARGS="--forward_jacobian_lambda ${JREG_LAMBDA:-0.1} --forward_jacobian_target ${JREG_TARGET:-1.0} --forward_jacobian_eps ${JREG_EPS:-0.001}"
+  EXTRA_ARGS="--forward_jacobian_lambda ${JREG_LAMBDA:-${FIGURE6_JREG_LAMBDA[$DATA]}} --forward_jacobian_target ${JREG_TARGET:-1.0} --forward_jacobian_eps ${JREG_EPS:-0.001}"
 fi
 
 out=""
