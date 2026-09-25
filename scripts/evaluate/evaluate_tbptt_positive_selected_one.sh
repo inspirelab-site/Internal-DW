@@ -20,12 +20,6 @@ PY
 case "${DATA}" in
   mg)
     K=32; H=48; origin_batch=16
-    if [[ "${S}" == 8 ]]; then
-      legacy="probe_outputs/tbptt_dense_multistart_rel_l2_1p5k_v1/mg/tbptt8_seed${SEED}.json"
-      [[ -s "${legacy}" ]] || { echo "[missing] ${legacy}" >&2; exit 3; }
-      echo "[reuse] ${legacy}"
-      exit 0
-    fi
     ckpt="${SWEEP_ROOT}/mg/mackey_glass/tau30_K32/tbptt${S}/seed${SEED}/best.pth"
     ;;
   ettm1|ettm2)
@@ -34,12 +28,6 @@ case "${DATA}" in
     ;;
   shear)
     K=32; H=48; origin_batch=2
-    if [[ "${S}" == 8 ]]; then
-      legacy="probe_outputs/tbptt_dense_multistart_rel_l2_1p5k_v1/shear/tbptt8_seed${SEED}.json"
-      [[ -s "${legacy}" ]] || { echo "[missing] ${legacy}" >&2; exit 3; }
-      echo "[reuse] ${legacy}"
-      exit 0
-    fi
     ckpt="${SWEEP_ROOT}/shear/shear_flow/unet_b32_D4_W2_K32_ds4/tbptt${S}/seed${SEED}/best.pth"
     ;;
   *) echo "[refuse] unknown DATA=${DATA}" >&2; exit 2 ;;

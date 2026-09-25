@@ -375,7 +375,6 @@ case "${METHOD}" in
              --dual_wiener_min_probes "${DUAL_WIENER_MIN_PROBES:-1}" \
              --dual_wiener_noise_model lagged_residual_bootstrap \
              --no-recurrent_grad_checkpoint); TAG="dualwiener_structured" ;;
-  # Historical routing ablations and the superseded global-horizon Wiener\n  # prototype are intentionally not part of the paper release.\n
   *) echo "unknown METHOD ${METHOD}"; exit 2 ;;
 esac
 

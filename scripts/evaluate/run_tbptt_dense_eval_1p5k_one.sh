@@ -15,26 +15,27 @@ MAX_ORIGINS=${MAX_ORIGINS:-64}
 ORIGIN_STRIDE=${ORIGIN_STRIDE:-1}
 BOOTSTRAP_DRAWS=${BOOTSTRAP_DRAWS:-10000}
 NUM_WORKERS=${NUM_WORKERS:-0}
+SWEEP_ROOT=${SWEEP_ROOT:-experiments/tbptt_positive_sweep_v1}
 
 case "${DATA}" in
   mg)
-    CKPT="experiments/tbptt_mg_a8/mackey_glass/tau30_K32/ckpt/seed${SEED}/best.pth"
+    CKPT=${CKPT:-${SWEEP_ROOT}/mg/mackey_glass/tau30_K32/tbptt8/seed${SEED}/best.pth}
     K=32; H=48; ORIGIN_BATCH=${ORIGIN_BATCH:-16}
     ;;
   narma)
-    CKPT="experiments/tbptt_narma_a8/narma/L5_K32/ckpt/seed${SEED}/best.pth"
+    CKPT=${CKPT:?set CKPT to the TBPTT-8 checkpoint}
     K=32; H=48; ORIGIN_BATCH=${ORIGIN_BATCH:-16}
     ;;
   ieeg)
-    CKPT="experiments/tbptt_ieeg_a8/ieeg/theta_K64/ckpt/seed${SEED}/best.pth"
+    CKPT=${CKPT:?set CKPT to the subject-specific TBPTT-8 checkpoint}
     K=64; H=96; ORIGIN_BATCH=${ORIGIN_BATCH:-8}
     ;;
   fmri)
-    CKPT="experiments/hcp_movie1/tbptt_a8/official_mamba_state_hid4096_D4_residual_gradCheckpoint_BPTT64_S16/seed${SEED}/best.pth"
+    CKPT=${CKPT:?set CKPT to the TBPTT-8 checkpoint}
     K=64; H=96; ORIGIN_BATCH=${ORIGIN_BATCH:-2}
     ;;
   shear)
-    CKPT="experiments/thewell_shear_final_lr3e4/shear_flow/unet_b32_D4_W2_K32_ds4/tbptt8/seed${SEED}/best.pth"
+    CKPT=${CKPT:-${SWEEP_ROOT}/shear/shear_flow/unet_b32_D4_W2_K32_ds4/tbptt8/seed${SEED}/best.pth}
     K=32; H=48; ORIGIN_BATCH=${ORIGIN_BATCH:-2}
     ;;
   *)
