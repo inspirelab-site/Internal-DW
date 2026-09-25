@@ -1,5 +1,6 @@
 """Check reference worker counts without launching training or reading datasets."""
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -7,9 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-BASH = shutil.which('bash')
-if Path('D:/Git/bin/bash.exe').exists():
-    BASH = 'D:/Git/bin/bash.exe'
+BASH = os.environ.get('BASH_EXECUTABLE') or shutil.which('bash')
 
 
 def shell(command):
@@ -34,7 +33,7 @@ def test_reference_workers_all_methods_and_seeds():
         elif data in ('ettm1', 'ettm2', 'ieeg'):
             expected = 0
         elif data == 'shear':
-            expected = 2 if arm in ('clip', 'jreg') else 0
+            expected = 0
         else:
             expected = 2 if arm in ('clip', 'jreg') or (arm == 'exact' and seed == '0') else 0
         assert int(workers) == expected, row
@@ -60,7 +59,7 @@ def test_baseline_resolves_and_exports_workers_before_launch():
 
 SELECTED = {
     'mg': (1.0, 1.0), 'ettm1': (0.3, 1.0), 'ettm2': (0.3, 1.0),
-    'shear': (0.3, 0.01), 'narma': (0.1, 1.0), 'ieeg': (0.3, 0.01),
+    'shear': (0.1, 0.1), 'narma': (0.1, 1.0), 'ieeg': (0.3, 0.01),
     'fmri': (1.0, 1.0), 'wb2': (1.0, 0.01),
 }
 
@@ -68,7 +67,8 @@ SELECTED = {
 @pytest.mark.parametrize('dataset', SELECTED)
 def test_selected_control_defaults_and_sweep_overrides(dataset):
     source = (ROOT / 'scripts/train/run_internal_dw_baseline_or_k_one.sh').read_text()
-    block = 'GRAD_CLIP=1.0' + source.split('GRAD_CLIP=1.0', 1)[1].split('out=""', 1)[0]
+    start = 'GRAD_CLIP=${FIGURE6_COMMON_GRAD_CLIP}'
+    block = start + source.split(start, 1)[1].split('out=""', 1)[0]
     prefix = ('source configs/reproduce/figure6.sh; '
               f'DATA={dataset}; unset CLIP_NORM JREG_LAMBDA JREG_TARGET JREG_EPS; ')
     clip, jreg = SELECTED[dataset]

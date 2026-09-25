@@ -1,9 +1,8 @@
 # Publishing this repository
 
-The research checkout contains private data, checkpoints, cluster logs, and
-discarded experiments. The root `.gitignore` is therefore an explicit public
-allowlist for `scripts/`; do not weaken it merely to make a local file appear
-on GitHub.
+Publish source, tests, documentation, and the documented reproduction scripts.
+The root `.gitignore` excludes datasets, generated outputs, and operational
+scripts from the release.
 
 ## 1. Decide the public metadata
 

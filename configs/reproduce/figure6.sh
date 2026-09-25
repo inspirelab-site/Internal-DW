@@ -6,14 +6,17 @@ FIGURE6_BOUNDARY_DATASETS=(narma ieeg fmri wb2)
 FIGURE6_POSITIVE_ARMS=(full_bptt internal_dw clip jreg tbptt static)
 FIGURE6_BOUNDARY_ARMS=(full_bptt internal_dw clip jreg)
 
+# Common safeguards; Clip alone replaces the clipping threshold.
+FIGURE6_COMMON_GRAD_CLIP=1.0
+FIGURE6_SHEAR_SCHEDULER=cosine
+
 # Training workers recorded by the reference runs (not evaluation workers).
 figure6_num_workers() {
   local data=$1 arm=$2 seed=$3
   case "${data}" in
     mg|narma|fmri) echo 4 ;;
     ettm1|ettm2|ieeg) echo 0 ;;
-    shear)
-      case "${arm}" in clip|jreg) echo 2 ;; *) echo 0 ;; esac ;;
+    shear) echo 0 ;;
     wb2)
       case "${arm}" in
         clip|jreg) echo 2 ;;
@@ -44,11 +47,11 @@ declare -A FIGURE6_SINGLE_GRAD_ACCUM=(
 # Selected once from seed-0 validation; test results were not read by either
 # selector. These values are fixed when reproducing the reported benchmark.
 declare -A FIGURE6_CLIP_NORM=(
-  [mg]=1.0 [ettm1]=0.3 [ettm2]=0.3 [shear]=0.3
+  [mg]=1.0 [ettm1]=0.3 [ettm2]=0.3 [shear]=0.1
   [narma]=0.1 [ieeg]=0.3 [fmri]=1.0 [wb2]=1.0
 )
 declare -A FIGURE6_JREG_LAMBDA=(
-  [mg]=1.0 [ettm1]=1.0 [ettm2]=1.0 [shear]=0.01
+  [mg]=1.0 [ettm1]=1.0 [ettm2]=1.0 [shear]=0.1
   [narma]=1.0 [ieeg]=0.01 [fmri]=1.0 [wb2]=0.01
 )
 
@@ -56,5 +59,5 @@ declare -A FIGURE6_STATIC_GAIN=(
   [mg]=0.6 [ettm1]=0.3 [ettm2]=0.6 [shear]=0.3
 )
 declare -A FIGURE6_TBPTT_SEGMENT=(
-  [mg]=8 [ettm1]=16 [ettm2]=32 [shear]=8
+  [mg]=8 [ettm1]=32 [ettm2]=32 [shear]=8
 )

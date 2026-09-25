@@ -53,7 +53,7 @@ if command -v flock >/dev/null 2>&1; then
 fi
 if [[ -s "${done_file}" ]]; then exit 0; fi
 
-GRAD_CLIP=1.0
+GRAD_CLIP=${FIGURE6_COMMON_GRAD_CLIP}
 EXTRA_ARGS=""
 if [[ "${ARM}" == clip ]]; then
   GRAD_CLIP=${CLIP_NORM:-${FIGURE6_CLIP_NORM[$DATA]}}
@@ -128,6 +128,7 @@ case "${DATA}" in
       GPUS="${GPUS}" BATCH="${SHEAR_BATCH:-1}" \
       GRAD_ACCUM="${SHEAR_GRAD_ACCUM:-4}" EPOCHS=100 \
       EARLY_STOP_PATIENCE=20 LR=3e-4 GRAD_CLIP="${GRAD_CLIP}" \
+      AR_SCHEDULER="${AR_SCHEDULER:-${FIGURE6_SHEAR_SCHEDULER}}" \
       EXTRA_ARGS="${EXTRA_ARGS}" SAVE_BASE="${save_base}" \
       SKIP_EXISTING=1 RESUME=auto bash scripts/train/run_thewell_arm.sh
     ;;

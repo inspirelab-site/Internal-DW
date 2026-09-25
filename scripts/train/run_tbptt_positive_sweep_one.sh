@@ -6,6 +6,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 export PYTHONPATH="$(pwd)/src:${PYTHONPATH:-}"
+source configs/reproduce/figure6.sh
 
 DATA=${DATA:?set DATA=mg|ettm1|ettm2|shear}
 S=${S:?set the TBPTT segment length}
@@ -52,15 +53,6 @@ case "${DATA}" in
     [[ "${S}" == 8 || "${S}" == 16 ]] || {
       echo "[refuse] MG candidates are S=8,16" >&2; exit 2;
     }
-    # Reuse the historical S=8 tree when present. A fresh public checkout
-    # trains the same selected segment under SWEEP_ROOT instead.
-    if [[ "${S}" == 8 ]]; then
-      out="experiments/tbptt_mg_a8/mackey_glass/tau30_K32/ckpt/seed${SEED}"
-      if [[ -s "${out}/best.pth" ]]; then
-        echo "[reuse] MG S=8 seed${SEED}: ${out}/best.pth"
-        exit 0
-      fi
-    fi
     DATASET=mackey_glass COND=tau30 K="${K}" METHOD="tbptt${S}" \
       SEED="${SEED}" GPUS="${GPUS}" HIDDEN=128 \
       BATCH="${LOCAL_BATCH}" GRAD_ACCUM="${ACCUM}" \
@@ -84,7 +76,7 @@ case "${DATA}" in
       METHOD="tbptt${S}" SEED="${SEED}" GPUS="${GPUS}" HIDDEN=128 \
       BATCH="${LOCAL_BATCH}" GRAD_ACCUM="${ACCUM}" \
       EPOCHS=100 ES=20 LR=1e-4 \
-      WEIGHT_DECAY=1e-4 GRAD_CLIP=0.1 AR_OPTIMIZER=adam \
+      WEIGHT_DECAY=1e-4 GRAD_CLIP="${FIGURE6_COMMON_GRAD_CLIP}" AR_OPTIMIZER=adam \
       AR_SCHEDULER=step NUM_WORKERS=0 MAMBA_TRAIN_STARTS=16 \
       PREPARED_NPZ="${prepared_npz}" RECURRENT_EVAL_HORIZON_BATCH=9 \
       SAVE_BASE="${SWEEP_ROOT}/${DATA}" SKIP_EXISTING=1 RESUME=auto \
@@ -97,15 +89,6 @@ case "${DATA}" in
     [[ "${S}" == 8 || "${S}" == 16 ]] || {
       echo "[refuse] shear candidates are S=8,16" >&2; exit 2;
     }
-    # Reuse the historical S=8 tree when present; otherwise train it in the
-    # public sweep tree using the same TBPTT implementation.
-    if [[ "${S}" == 8 ]]; then
-      out="experiments/thewell_shear_final_lr3e4/shear_flow/unet_b32_D4_W2_K32_ds4/tbptt8/seed${SEED}"
-      if [[ -s "${out}/best.pth" ]]; then
-        echo "[reuse] shear S=8 seed${SEED}: ${out}/best.pth"
-        exit 0
-      fi
-    fi
     DATASET=shear_flow METHOD="tbptt${S}" SEED="${SEED}" K="${K}" \
       GPUS="${GPUS}" BATCH="${LOCAL_BATCH}" GRAD_ACCUM="${ACCUM}" EPOCHS=100 \
       EARLY_STOP_PATIENCE=20 LR=3e-4 GRAD_CLIP=1.0 \

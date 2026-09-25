@@ -152,7 +152,7 @@ run_static() {
 run_tbptt() {
   local data=$1 seed=$2
   local segment=${FIGURE6_TBPTT_SEGMENT[$data]}
-  local target ckpt legacy
+  local target ckpt
   target=$(control_result_path "${data}" tbptt "${seed}")
   [[ -s "${target}" ]] && { echo "[skip result] ${target}"; return 0; }
   DATA="${data}" S="${segment}" SEED="${seed}" GPU="${GPU}" \
@@ -160,15 +160,11 @@ run_tbptt() {
       bash scripts/train/run_tbptt_positive_sweep_one.sh || return $?
   case "${data}" in
     mg)
-      legacy="experiments/tbptt_mg_a8/mackey_glass/tau30_K32/ckpt/seed${seed}/best.pth"
       ckpt="${FIGURE6_TBPTT_ROOT}/mg/mackey_glass/tau30_K32/tbptt${segment}/seed${seed}/best.pth"
-      [[ -s "${legacy}" ]] && ckpt="${legacy}"
       ;;
     ettm1|ettm2) ckpt="${FIGURE6_TBPTT_ROOT}/${data}/prepared_temporal_driven/${data}_K64/tbptt${segment}/seed${seed}/best.pth" ;;
     shear)
-      legacy="experiments/thewell_shear_final_lr3e4/shear_flow/unet_b32_D4_W2_K32_ds4/tbptt8/seed${seed}/best.pth"
       ckpt="${FIGURE6_TBPTT_ROOT}/shear/shear_flow/unet_b32_D4_W2_K32_ds4/tbptt${segment}/seed${seed}/best.pth"
-      [[ -s "${legacy}" ]] && ckpt="${legacy}"
       ;;
   esac
   evaluate_dense_control "${ckpt}" "${target}" "${data}" tbptt || return $?

@@ -97,6 +97,8 @@ def train_spec(task, output, gpu, config):
         return cmd, env
     spec = config['datasets'][data]
     env['NUM_WORKERS'] = str(spec['num_workers'])
+    if 'ar_scheduler' in spec:
+        env['AR_SCHEDULER'] = spec['ar_scheduler']
     env.update(PHASE='A', DATA=data, ARM=arm, SEED=str(seed), K=str(spec['K']),
                GPUS=gpu, ROOT=str(output / 'train'), SYNC_ROOT=str(output / 'sync'),
                EVAL_ROOT=str(output / 'unused_test'), TRAIN_ONLY='1', SKIP_EXISTING='1',

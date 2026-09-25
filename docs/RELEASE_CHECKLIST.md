@@ -10,8 +10,9 @@
 - [ ] Run `bash scripts/reproduce/00_smoke_test.sh` in a fresh Linux environment.
 - [ ] Run `python -m pytest -q`.
 - [ ] Run every `render` entry point against the release result bundle.
-- [ ] Verify `git status --ignored` contains no credentials, private paths,
-      raw participant data, checkpoints, logs, or cluster launch scripts.
+- [ ] Inspect `git ls-files` and `git diff --cached`: tracked/staged files
+      must contain no credentials, machine-specific paths, raw participant
+      data, checkpoints, logs, or cluster launch scripts.
 
 ## Suggested release contents
 
@@ -21,6 +22,4 @@
   ledgers and, where redistribution permits, trained checkpoints.
 - `SHA256SUMS`: checksum for every release asset.
 
-The local checkout intentionally retains ignored operational scripts so the
-authors can resume and audit old server runs. They should not be force-added to
-the public repository.
+Do not force-add ignored operational scripts or generated outputs.

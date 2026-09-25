@@ -47,12 +47,6 @@ and recovery scripts are local-only and excluded by `.gitignore`.
 
 ## Scope rule
 
-Code for cross-backbone studies, RL, rejected candidate datasets, global-horizon
-Wiener routing, and superseded mechanism probes is intentionally absent because
-none of those experiments appears in the benchmark PDF.
-
-The GitHub allowlist in `.gitignore` further excludes local cluster operations
-and one-off development probes without deleting them from the research
-checkout.  This keeps the released code surface smaller than the full local
-experiment history while preserving every dependency of the documented
-reproduction entry points.
+The release contains the implementations required by the documented paper
+experiments. Cluster operations, datasets, and generated outputs are excluded
+by `.gitignore`.

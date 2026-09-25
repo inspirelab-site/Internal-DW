@@ -7,7 +7,7 @@
     "mg": {"K": 32, "batch": 4, "accum": 8, "num_workers": 4},
     "ettm1": {"K": 64, "batch": 32, "accum": 1, "num_workers": 0},
     "ettm2": {"K": 64, "batch": 32, "accum": 1, "num_workers": 0},
-    "shear": {"K": 32, "batch": 1, "accum": 4, "num_workers": 2},
+    "shear": {"K": 32, "batch": 1, "accum": 4, "num_workers": 0, "ar_scheduler": "cosine"},
     "narma": {"K": 32, "batch": 4, "accum": 8, "num_workers": 4},
     "ieeg": {"K": 64, "batch": 4, "accum": 8, "num_workers": 0},
     "fmri": {"K": 64, "batch": 2, "accum": 16, "num_workers": 4},

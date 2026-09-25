@@ -171,8 +171,8 @@ are kept outside the checkout.
 
 ### Movie iEEG: prepare, train, and test
 
-The iEEG benchmark uses **16 participants with subject-specific models and visual stimulus**, not
-the earlier single-subject/no-stimulus experiment. Prepare only iEEG with:
+The iEEG benchmark uses **16 participants with subject-specific models and visual stimulus**.
+Prepare only iEEG with:
 
 ```bash
 FIF_ROOT=/path/to/preprocessed_length_matched \
@@ -238,9 +238,6 @@ on chunk count), verifies DW calibration, and measures 3 training-loop epochs
 per run, excluding validation, checkpoint I/O and template construction. It
 reports mean and sample SD across three paired repeat-level participant means
 in `experiments/ieeg_cohort_timing_v1/timing_summary.json`.
-
-These public commands use fresh output directories and do not resume or
-overwrite the private `ieeg_fif_visual_v3` training queues.
 
 ### One-command Figure 6 reproduction
 
@@ -390,7 +387,7 @@ docs/DATA_FORMATS.md             dataset trees, file keys, and tensor contracts
 Cluster launchers, monitoring scripts, checkpoints, generated figures, raw
 datasets, and exploratory ledgers are intentionally local-only and excluded by
 `.gitignore`. They are not part of the public API.
-The lower-level script counts and functional breakdown are documented in
+The lower-level functional breakdown is documented in
 [`scripts/README.md`](scripts/README.md).
 
 ## Reproduce the paper
