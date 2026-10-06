@@ -6,8 +6,8 @@ scripts from the release.
 
 ## 1. Decide the public metadata
 
-Before publishing, add the intended `LICENSE` and update the citation section
-of `README.md` (and optionally add `CITATION.cff`). If the paper is under
+Before publishing, verify `LICENSE`, the citation section of `README.md`,
+and `CITATION.cff`. If the paper is under
 anonymous review, verify the venue's current anonymity policy before creating
 a public repository tied to an author account.
 
@@ -28,7 +28,8 @@ git diff --cached
 The staged tree should contain source, tests, documentation, examples, and the
 paper reproduction scripts. It should not contain `data/`, `artifacts/`,
 `experiments/`, `probe_outputs/`, `logs/`, checkpoints, generated figures, or
-root-level research ledgers.
+root-level research ledgers. The curated paper illustrations in `docs/assets/`
+are part of the public documentation and should be included.
 
 Check for unexpectedly large staged files before committing:
 
@@ -103,4 +104,3 @@ git push origin v0.1.0
 Create a GitHub release from that tag, attach or link the matching result
 bundle, and include the source commit, artifact checksum, environment notes,
 and any known reproduction caveats in the release notes.
-

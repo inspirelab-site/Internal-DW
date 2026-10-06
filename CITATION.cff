@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use this code or build on the method, please cite the paper below."
+title: "Internal-DW: Internal Dual-Wiener routing"
+type: software
+authors:
+  - family-names: Zhao
+    given-names: Junhao
+  - family-names: Simberg
+    given-names: David Michael
+  - family-names: Kang
+    given-names: Jacob
+  - family-names: Kurniawan
+    given-names: Colin Connor
+  - family-names: Xu
+    given-names: Nan
+repository-code: "https://github.com/inspirelab-site/Internal-DW"
+license: MIT
+preferred-citation:
+  type: article
+  title: "Large Distant Gradients Need Not Be Reliable: reliability-weighted credit assignment for long-horizon autoregressive forecasting"
+  authors:
+    - family-names: Zhao
+      given-names: Junhao
+    - family-names: Simberg
+      given-names: David Michael
+    - family-names: Kang
+      given-names: Jacob
+    - family-names: Kurniawan
+      given-names: Colin Connor
+    - family-names: Xu
+      given-names: Nan
+  journal: "arXiv preprint arXiv:2609.12890"
+  year: 2026
+  doi: "10.48550/arXiv.2609.12890"
+  url: "https://arxiv.org/abs/2609.12890v2"
