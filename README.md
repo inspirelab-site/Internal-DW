@@ -14,23 +14,13 @@
 
 </div>
 
-**Internal-DW** is the official implementation of **Internal Dual-Wiener routing**,
-a backward-only intervention for residual autoregressive models. It preserves
-the full forward rollout and every step loss, while weighting the identity and
-nonlinear gradient routes by their estimated reliability.
+**Official research code for Internal Dual-Wiener routing (Internal-DW).**
 
-> Retaining long-horizon supervision does not require trusting every backward contribution equally.
+![Measured known-SNR motivation: distant-loss gradient magnitude grows, gradient SNR falls, and the per-step innovation-noise energy fraction increases.](docs/assets/known-snr-motivation.gif)
 
-![Internal-DW: unchanged forward residual block, separate backward route gains, and calibration from task and noise statistics.](docs/assets/internal-dw-method.png)
-
-*Figure 2 from the paper. Route gains are calibrated for each forecast horizon and residual layer.*
-
-| What Internal-DW provides | How it works |
-|---|---|
-| **Full forward rollout** | Keeps predictions and all per-step losses unchanged. |
-| **Separate route gains** | Applies bounded Wiener gains to the identity and nonlinear backward routes. |
-| **Automatic calibration** | Estimates gains from route-level gradient statistics and an explicit noise model. |
-| **A reusable PyTorch operator** | Exposes `InternalDW` and `InternalDWResidual`, with a runnable integration example. |
+*Known-SNR measurements from a frozen Full-BPTT model: four Monte Carlo repetitions,
+64 future-noise draws each. Noise percentage is measured per forecast step.*
+[Static version](docs/assets/known-snr-motivation.png) · [Data and provenance](docs/assets/README.md#known-snr-motivation-animation)
 
 ## Why reliability-weighted gradients?
 
@@ -48,6 +38,25 @@ weights contributions inside residual blocks before they accumulate into the upd
 the two components are not separately observed in application data.*
 
 </details>
+
+## Method
+
+**Internal-DW** is a backward-only intervention for residual autoregressive models. It preserves
+the full forward rollout and every step loss, while weighting the identity and
+nonlinear gradient routes by their estimated reliability.
+
+> Retaining long-horizon supervision does not require trusting every backward contribution equally.
+
+![Internal-DW: unchanged forward residual block, separate backward route gains, and calibration from task and noise statistics.](docs/assets/internal-dw-method.png)
+
+*Figure 2 from the paper. Route gains are calibrated for each forecast horizon and residual layer.*
+
+| What Internal-DW provides | How it works |
+|---|---|
+| **Full forward rollout** | Keeps predictions and all per-step losses unchanged. |
+| **Separate route gains** | Applies bounded Wiener gains to the identity and nonlinear backward routes. |
+| **Automatic calibration** | Estimates gains from route-level gradient statistics and an explicit noise model. |
+| **A reusable PyTorch operator** | Exposes `InternalDW` and `InternalDWResidual`, with a runnable integration example. |
 
 ## Results
 
